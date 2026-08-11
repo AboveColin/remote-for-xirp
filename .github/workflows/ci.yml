@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # macOS only, and not incidentally: this reads the Xirp app's process environment
+    # via `ps -E`, drives tmux, and installs a launchd agent. There is nothing to
+    # build for another platform.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: vet
+        run: go vet ./...
+
+      - name: build
+        run: go build -o xirp-remote .
+
+      # The UI ships as plain files with no build step, so the check that matters is
+      # that each one parses. Node is already on the runner.
+      - name: check the front end parses
+        run: |
+          for f in web/*.js; do node --check "$f" || exit 1; done
+
+      # Every element the scripts reach for must exist in the markup. A single stale
+      # id throws at load and takes the whole app with it, which is a mistake worth
+      # catching here rather than on a phone.
+      - name: check element references resolve
+        run: |
+          python3 - <<'PY'
+          import re, pathlib, sys
+          html = pathlib.Path('web/index.html').read_text()
+          ids = set(re.findall(r'id="([^"]+)"', html))
+          missing = []
+          for f in ('web/app.js', 'web/nav.js'):
+              src = pathlib.Path(f).read_text()
+              for m in re.finditer(r"""el\('([^']+)'\)|getElementById\('([^']+)'\)""", src):
+                  name = m.group(1) or m.group(2)
+                  if name not in ids:
+                      missing.append(f"{f}: {name}")
+          if missing:
+              print("references with no matching id:")
+              print("\n".join(missing))
+              sys.exit(1)
+          print(f"{len(ids)} ids, all references resolve")
+          PY

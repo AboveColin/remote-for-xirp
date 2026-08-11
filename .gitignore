@@ -1,0 +1,8 @@
+/xirp-remote
+*.log
+.DS_Store
+
+# Android wrapper build output and signing material, which must never be committed.
+/deploy/android/twa/
+*.keystore
+*.jks

@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Remote for Xirp</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1014" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Xirp" />
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!-- Login gate. Shown until /api/sessions answers 200. -->
+    <section id="login" class="gate" hidden>
+      <div class="gate-card">
+        <div class="brand"><span class="brand-dot"></span>Remote for Xirp</div>
+        <p class="subdued">Enter the access key for this bridge.</p>
+        <form id="login-form">
+          <input
+            id="login-key"
+            type="password"
+            inputmode="text"
+            autocomplete="current-password"
+            placeholder="Access key"
+            aria-label="Access key"
+          />
+          <button type="submit" class="btn btn-accent">Unlock</button>
+        </form>
+        <p id="login-error" class="error" hidden></p>
+      </div>
+    </section>
+
+    <!-- First run. The app may be opened cold from a home-screen icon with nothing
+         configured, so this is the screen that has to explain itself. -->
+    <section id="welcome" hidden>
+      <div class="welcome">
+        <div class="welcome-mark"><img src="./icon.svg" alt="" width="72" height="72" /></div>
+        <h1>Remote for Xirp</h1>
+        <p class="welcome-lead">
+          Watch your agents and steer them from your phone. Connect the machine running
+          Xirp to get started.
+        </p>
+
+        <button id="welcome-scan" class="btn btn-accent btn-big">Scan QR code</button>
+        <button id="welcome-here" class="btn btn-big">Use this machine</button>
+        <button id="welcome-manual" class="linkish">Enter details manually</button>
+
+        <ol class="howto">
+          <li><span>1</span> On the machine running Xirp, run <code>xirp-remote qr</code></li>
+          <li><span>2</span> Scan the code it prints with this phone</li>
+          <li><span>3</span> That is it — the key comes with the code</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- Machines: the home screen. One card per machine running Xirp. -->
+    <section id="machines-view" hidden>
+      <header class="topbar">
+        <div class="brand"><span class="brand-dot"></span>Machines</div>
+        <button id="machines-settings" class="icon-btn" aria-label="Settings">⚙</button>
+      </header>
+      <div id="machine-stats" class="stats"></div>
+      <div id="machines" class="machines"></div>
+      <button id="add-machine" class="add-machine">
+        <span class="add-glyph">⌗</span>
+        <span>
+          <strong>Add a machine</strong>
+          <em class="subdued">Scan a pairing code</em>
+        </span>
+      </button>
+      <footer class="foot subdued" id="machines-foot"></footer>
+    </section>
+
+    <!-- Folders: the projects on one machine. -->
+    <section id="projects-view" hidden>
+      <header class="topbar">
+        <button id="projects-back" class="icon-btn" aria-label="Back">‹</button>
+        <div class="detail-title">
+          <span id="projects-title">Projects</span>
+          <span id="projects-sub" class="subdued"></span>
+        </div>
+        <button id="projects-new" class="icon-btn accent" aria-label="New session">+</button>
+      </header>
+      <div class="searchbar">
+        <input id="search" type="search" placeholder="Search all sessions…" aria-label="Search sessions" autocomplete="off" />
+      </div>
+      <nav class="filters" id="filters">
+        <button class="chip chip-on" data-filter="active">Active</button>
+        <button class="chip" data-filter="all">All</button>
+      </nav>
+      <div id="approvals" class="approvals" hidden></div>
+      <div id="folders" class="folders"></div>
+      <p id="list-empty" class="empty subdued" hidden>No sessions.</p>
+      <footer class="foot subdued" id="list-foot"></footer>
+    </section>
+
+    <!-- Camera scanner. Uses the platform barcode detector when present. -->
+    <section id="scan-view" hidden>
+      <header class="topbar">
+        <button id="scan-close" class="icon-btn" aria-label="Back">‹</button>
+        <div class="brand">Scan QR code</div>
+      </header>
+      <div class="scan">
+        <video id="scan-video" playsinline muted></video>
+        <div class="scan-frame"></div>
+        <p id="scan-status" class="subdued">Starting camera…</p>
+        <button id="scan-manual" class="linkish">Enter details manually instead</button>
+      </div>
+    </section>
+
+    <!-- Add a machine by hand. Secondary to scanning, but the only option when a
+         browser has no barcode detector. -->
+    <section id="manual-view" hidden>
+      <header class="topbar">
+        <button id="manual-back" class="icon-btn" aria-label="Back">‹</button>
+        <div class="brand">Add machine</div>
+      </header>
+      <form id="manual-form" class="manual">
+        <label for="manual-name">Name</label>
+        <input id="manual-name" type="text" placeholder="studio mac" autocapitalize="words" />
+        <label for="manual-url">Address</label>
+        <input id="manual-url" type="url" inputmode="url" placeholder="https://xirp.example.com" autocapitalize="none" autocomplete="off" />
+        <label for="manual-key">Access key <span class="subdued">(if the machine requires one)</span></label>
+        <input id="manual-key" type="text" placeholder="32 hex characters" autocapitalize="none" autocomplete="off" />
+        <button type="submit" class="btn btn-accent btn-big">Add machine</button>
+        <p id="manual-error" class="error" hidden></p>
+      </form>
+    </section>
+
+    <!-- Session list -->
+    <section id="list-view" hidden>
+      <header class="topbar">
+        <button id="sessions-back" class="icon-btn" aria-label="Back">‹</button>
+        <div class="detail-title">
+          <span id="sessions-title">Sessions</span>
+          <span id="sessions-sub" class="subdued"></span>
+        </div>
+        <button id="new-session" class="icon-btn accent" aria-label="New session">+</button>
+        <button id="refresh" class="icon-btn" aria-label="Refresh">↻</button>
+      </header>
+
+      <div id="sessions" class="sessions"></div>
+      <p id="sessions-empty" class="empty subdued" hidden>No sessions here.</p>
+      <footer class="foot subdued" id="sessions-foot"></footer>
+    </section>
+
+    <!-- Session detail -->
+    <section id="detail-view" hidden>
+      <header class="topbar">
+        <button id="back" class="icon-btn" aria-label="Back">‹</button>
+        <div class="detail-title">
+          <span id="detail-name">Session</span>
+          <span id="detail-sub" class="subdued"></span>
+        </div>
+        <button id="ack" class="icon-btn" aria-label="Acknowledge" hidden>✓</button>
+        <button id="stop" class="icon-btn danger" aria-label="Stop session">■</button>
+      </header>
+
+      <div id="detail-meta" class="meta"></div>
+      <div id="detail-git" class="meta" hidden></div>
+      <div id="detail-urls" class="urls" hidden></div>
+      <details id="detail-commits" class="commits" hidden>
+        <summary>Recent commits</summary>
+        <div id="commits-body"></div>
+      </details>
+      <div id="transcript" class="transcript"></div>
+
+      <!-- 1:1 view of the session's tmux pane. Whatever the agent's TUI is drawing
+           appears here, so slash-command menus and pickers work without this app
+           knowing anything about them. -->
+      <div id="terminal-wrap" hidden>
+        <div id="terminal" class="terminal" aria-label="Terminal"></div>
+        <div class="keyrow" id="keyrow">
+          <button data-key="escape">esc</button>
+          <button data-key="tab">tab</button>
+          <button data-key="up">↑</button>
+          <button data-key="down">↓</button>
+          <button data-key="enter">⏎</button>
+          <button data-key="ctrl-c">^C</button>
+          <button data-slash="/">/</button>
+        </div>
+      </div>
+
+      <button id="jump-latest" class="jump" hidden aria-label="Jump to latest">↓ Latest</button>
+
+      <form id="composer" class="composer">
+        <button
+          type="button"
+          id="send-mode"
+          class="mode-btn"
+          aria-label="Send mode"
+          title="Submit: send and run. Type: leave it in the agent's input."
+        >⏎</button>
+        <textarea
+          id="composer-text"
+          rows="1"
+          placeholder="Message this session…"
+          aria-label="Message"
+          enterkeyhint="send"
+        ></textarea>
+        <button type="submit" id="send" class="btn btn-accent">Send</button>
+      </form>
+    </section>
+
+    <!-- Settings -->
+    <section id="settings-view" hidden>
+      <header class="topbar">
+        <button id="settings-back" class="icon-btn" aria-label="Back">‹</button>
+        <div class="brand">Settings</div>
+      </header>
+
+      <div class="settings">
+        <h2>Transcript</h2>
+        <p class="subdued setting-hint">
+          Chat is just the conversation. Full adds the agent's tool calls. Terminal is
+          the live tmux pane, exactly as the agent draws it — slash commands, menus and
+          prompts all work there.
+        </p>
+        <div class="segmented" id="set-mode">
+          <button data-value="chat">Chat</button>
+          <button data-value="full">Full</button>
+          <button data-value="terminal">Terminal</button>
+        </div>
+
+        <h2>Messages loaded</h2>
+        <p class="subdued setting-hint">Fewer is faster on a slow connection.</p>
+        <div class="segmented" id="set-limit">
+          <button data-value="20">20</button>
+          <button data-value="40">40</button>
+          <button data-value="80">80</button>
+        </div>
+
+        <h2>Sessions shown by default</h2>
+        <div class="segmented" id="set-filter">
+          <button data-value="active">Active</button>
+          <button data-value="all">All</button>
+        </div>
+
+        <h2>Timestamps</h2>
+        <p class="subdued setting-hint">Show the time beside each message.</p>
+        <div class="segmented" id="set-timestamps">
+          <button data-value="off">Off</button>
+          <button data-value="on">On</button>
+        </div>
+
+        <h2>Hosts</h2>
+        <p class="subdued setting-hint">
+          Each host is one machine running Xirp. Add another to control several from
+          this app; the active one is used everywhere.
+        </p>
+        <div id="host-list" class="host-list"></div>
+        <form id="host-add" class="host-add">
+          <input id="host-name" type="text" placeholder="Name (e.g. studio mac)" autocapitalize="none" />
+          <input id="host-url" type="url" placeholder="https://host:8790" autocapitalize="none" autocomplete="off" />
+          <input id="host-key" type="text" placeholder="Access key (optional)" autocapitalize="none" autocomplete="off" />
+          <button type="submit" class="btn">Add host</button>
+        </form>
+
+        <h2>Pair another device</h2>
+        <p class="subdued setting-hint">
+          Scan this with a phone to open the app with the access key already set.
+        </p>
+        <div class="pair">
+          <img id="pair-qr" alt="Pairing QR code" />
+          <div id="pair-url" class="pair-url subdued"></div>
+        </div>
+
+        <p class="subdued setting-foot">
+          Settings are stored in this browser only, not on the server.
+        </p>
+      </div>
+    </section>
+
+    <!-- New session sheet -->
+    <section id="create-sheet" class="sheet" hidden>
+      <div class="sheet-card">
+        <header class="sheet-head">
+          <strong>New session</strong>
+          <button id="create-close" class="icon-btn" aria-label="Close">×</button>
+        </header>
+        <form id="create-form">
+          <label for="create-project">Project</label>
+          <select id="create-project" required></select>
+
+          <label for="create-agent">Agent</label>
+          <select id="create-agent"></select>
+
+          <label for="create-model">Model <span class="subdued">(optional)</span></label>
+          <select id="create-model"></select>
+
+          <label for="create-goal">Goal</label>
+          <textarea id="create-goal" rows="3" placeholder="What should it do?"></textarea>
+
+          <label for="create-branch">New branch <span class="subdued">(optional)</span></label>
+          <input id="create-branch" type="text" autocapitalize="none" placeholder="leave empty for the default" />
+
+          <label class="checkline">
+            <input id="create-terminal" type="checkbox" />
+            Plain shell instead of an agent
+          </label>
+
+          <button type="submit" id="create-submit" class="btn btn-accent">Create</button>
+          <p id="create-error" class="error" hidden></p>
+        </form>
+      </div>
+    </section>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="./nav.js"></script>
+    <script src="./markdown.js"></script>
+    <script src="./ansi.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

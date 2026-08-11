@@ -1,0 +1,37 @@
+# xirp-remote — mobile control surface for the Xirp daemon on the MacBook.
+#
+# Own file rather than an entry in routes.yml: appending there lands inside
+# http.services and the router is silently ignored.
+#
+# TWO BACKENDS ON PURPOSE. The MacBook is the only "host" here that moves, and
+# exactly one of these addresses is alive at a time:
+#
+#   192.168.1.50  its DHCP lease at home. Alive only when it is on this LAN.
+#   10.8.0.2        its WireGuard address. Alive only when it is AWAY — the
+#                    location switcher tears the home tunnel down at home.
+#
+# So a single server URL is guaranteed to be wrong half the time. The health
+# check is what makes this work: Traefik polls both every 10s and only routes to
+# the one answering, which means the site follows the laptop between locations
+# with no edit. Your proxy host needs a route to the VPN subnet.
+#
+# Remaining dependency: the home address is a DHCP lease. If it changes, the
+# home path breaks (away still works) until the URL below is updated.
+http:
+  routers:
+    xirp-remote:
+      rule: "Host(`xirp.example.lan`)"
+      service: xirp-remote-svc
+      entryPoints: [websecure]
+      tls: {}
+
+  services:
+    xirp-remote-svc:
+      loadBalancer:
+        healthCheck:
+          path: /healthz
+          interval: 10s
+          timeout: 3s
+        servers:
+          - url: "http://192.168.1.50:8790"
+          - url: "http://10.8.0.2:8790"

@@ -1,0 +1,380 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// ---- search ----
+
+// handleSearch runs the daemon's full-text search across session metadata,
+// messages and JSONL transcripts.
+//
+// Results stream in per source and can repeat the same session, so they are
+// deduplicated here — the phone gets one row per session, which is what a person
+// wants to tap on.
+func handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, 400, map[string]any{"error": "missing q"})
+		return
+	}
+	searchID := fmt.Sprintf("xr-%d", time.Now().UnixNano())
+	frames, err := client.CallStream(map[string]any{
+		"type":     "session-search:search",
+		"query":    q,
+		"searchId": searchID,
+	}, "session-search:results", 12*time.Second)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+
+	seen := map[string]bool{}
+	out := []map[string]any{}
+	for _, f := range frames {
+		if id, _ := f["searchId"].(string); id != searchID {
+			continue // a stale search's frames, not ours
+		}
+		list, _ := f["results"].([]any)
+		for _, item := range list {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			sid, _ := m["sessionId"].(string)
+			if sid == "" || seen[sid] {
+				continue
+			}
+			seen[sid] = true
+			out = append(out, project(m, []string{
+				"sessionId", "name", "status", "snippet", "matchField",
+				"lastActivityAt", "createdAt", "provider",
+			}))
+			if len(out) >= 40 {
+				break
+			}
+		}
+	}
+	writeJSON(w, 200, map[string]any{"query": q, "results": out, "frames": len(frames)})
+}
+
+// ---- metadata for the create form ----
+
+type metaCache struct {
+	payload map[string]any
+	at      time.Time
+}
+
+var mcache metaCache
+
+// handleMeta returns the projects and coding agents a new session can be created
+// with. Both change rarely, so the answer is cached for a minute; the create
+// sheet asks for it every time it opens.
+func handleMeta(w http.ResponseWriter, r *http.Request) {
+	if time.Since(mcache.at) < 60*time.Second && mcache.payload != nil {
+		writeJSON(w, 200, mcache.payload)
+		return
+	}
+
+	projects := []map[string]any{}
+	if res, err := client.Call(map[string]any{"type": "projects:list"}, "projects:list", 10*time.Second); err == nil {
+		if list, ok := res["projects"].([]any); ok {
+			for _, p := range list {
+				if pm, ok := p.(map[string]any); ok {
+					projects = append(projects, project(pm, []string{
+						"id", "name", "path", "defaultBranch", "activeSessions", "lastActivityAt",
+					}))
+				}
+			}
+		}
+	}
+
+	agents := []map[string]any{}
+	if res, err := client.Call(map[string]any{"type": "agents:list"}, "agents:list", 10*time.Second); err == nil {
+		// The reply to `agents:list` carries them under `harnesses`, not `agents`.
+		// Reading the obvious key returned an empty list with no error.
+		list, ok := res["harnesses"].([]any)
+		if !ok {
+			list, ok = res["agents"].([]any)
+		}
+		if ok {
+			for _, a := range list {
+				am, ok := a.(map[string]any)
+				if !ok {
+					continue
+				}
+				// Only agents actually installed can start a session; offering the
+				// rest would produce a create that fails after the fact.
+				if installed, _ := am["installed"].(bool); !installed {
+					continue
+				}
+				agents = append(agents, project(am, []string{"agentName", "version", "description"}))
+			}
+		}
+	}
+
+	payload := map[string]any{"projects": projects, "agents": agents}
+	mcache = metaCache{payload: payload, at: time.Now()}
+	writeJSON(w, 200, payload)
+}
+
+// ---- models ----
+
+// handleModels lists the models an agent can run, with context window and price.
+// The daemon knows these per harness, so the create sheet can offer "cheap model
+// for a small job" without anyone memorising model ids.
+func handleModels(w http.ResponseWriter, r *http.Request) {
+	agent := strings.TrimSpace(r.URL.Query().Get("agent"))
+	if agent == "" {
+		writeJSON(w, 400, map[string]any{"error": "missing agent"})
+		return
+	}
+	res, err := client.Call(map[string]any{
+		"type": "settings:getModels", "agentName": agent,
+	}, "settings:models", 15*time.Second)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	list, _ := res["models"].([]any)
+	out := make([]map[string]any, 0, len(list))
+	for _, m := range list {
+		mm, ok := m.(map[string]any)
+		if !ok {
+			continue
+		}
+		entry := project(mm, []string{"model", "contextWindowSize"})
+		// Input price is the number that decides "is this model worth it for this
+		// errand". The rest of the pricing block is noise on a phone.
+		if p, ok := mm["pricePerMillion"].(map[string]any); ok {
+			entry["inputPerMillion"] = p["input"]
+			entry["outputPerMillion"] = p["output"]
+		}
+		out = append(out, entry)
+	}
+	writeJSON(w, 200, map[string]any{"agent": agent, "models": out})
+}
+
+// ---- session extras ----
+
+// sessionURLs returns URLs the daemon spotted in the session's terminal output —
+// dev server addresses, preview links, PR links. On a phone these are the payoff:
+// an agent says "running on :3000" and you can just tap it.
+func sessionURLs(w http.ResponseWriter, r *http.Request, id string) {
+	res, err := client.Call(map[string]any{"type": "session:urls:get", "sessionId": id}, "session:urls", 15*time.Second)
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"urls": []any{}, "unavailable": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"urls": res["urls"]})
+}
+
+// sessionLog returns recent commits from the session's worktree, so you can see
+// what an agent actually committed rather than inferring it from the transcript.
+func sessionLog(w http.ResponseWriter, r *http.Request, id string) {
+	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	sm, _ := res["session"].(map[string]any)
+	if sm == nil {
+		writeJSON(w, 404, map[string]any{"error": "session not found"})
+		return
+	}
+	projectID, _ := sm["projectId"].(string)
+	if projectID == "" {
+		writeJSON(w, 200, map[string]any{"commits": []any{}, "unavailable": "session has no project"})
+		return
+	}
+	req := map[string]any{"type": "git:log", "projectId": projectID, "limit": 10}
+	if wt, _ := sm["worktreePath"].(string); wt != "" {
+		req["worktreePath"] = wt
+	}
+	if br, _ := sm["branch"].(string); br != "" {
+		req["branch"] = br
+	}
+	gres, err := client.Call(req, "git:log", 25*time.Second)
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"commits": []any{}, "unavailable": err.Error()})
+		return
+	}
+	commits, _ := gres["commits"].([]any)
+	out := make([]map[string]any, 0, len(commits))
+	for _, c := range commits {
+		if cm, ok := c.(map[string]any); ok {
+			out = append(out, project(cm, []string{"hash", "shortHash", "subject", "message", "author", "date", "relativeDate"}))
+		}
+	}
+	writeJSON(w, 200, map[string]any{"commits": out})
+}
+
+// sessionAck clears the "needs attention" state on a finished or failed session.
+// It is the one write here that cannot break anything.
+func sessionAck(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]any{"error": "POST only"})
+		return
+	}
+	if _, err := client.Call(map[string]any{"type": "session:acknowledge", "sessionId": id}, "session:updated", 15*time.Second); err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// ---- create ----
+
+// handleCreate starts a new session. The daemon answers `session:creating` first
+// and `session:created` when the worktree and agent are ready, which can take a
+// few seconds, so this waits for the latter.
+func handleCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]any{"error": "POST only"})
+		return
+	}
+	var body struct {
+		ProjectID   string `json:"projectId"`
+		Goal        string `json:"goal"`
+		Name        string `json:"name"`
+		Agent       string `json:"agent"`
+		Model       string `json:"model"`
+		NewBranch   string `json:"newBranch"`
+		UseTerminal bool   `json:"useTerminal"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&body); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad body"})
+		return
+	}
+	if body.ProjectID == "" {
+		writeJSON(w, 400, map[string]any{"error": "projectId required"})
+		return
+	}
+
+	// A plain shell is a different message entirely. `session:create`'s useTerminal
+	// flag does NOT mean "terminal instead of agent" — it selects the tmux transport
+	// (the default), and setting it to false selects Claude-only SDK mode. Passing it
+	// hoping for a shell produces a full agent session, which is what happened here
+	// before this was checked: the pane came up running Claude Code.
+	if body.UseTerminal {
+		res, err := client.Call(map[string]any{
+			"type": "project:create-terminal", "projectId": body.ProjectID,
+		}, "session:created", 60*time.Second)
+		if err != nil {
+			writeJSON(w, 502, map[string]any{"error": err.Error()})
+			return
+		}
+		sm, _ := res["session"].(map[string]any)
+		id, _ := sm["id"].(string)
+		log.Printf("created terminal session %s (project=%s)", id, body.ProjectID)
+		writeJSON(w, 200, map[string]any{"ok": true, "session": project(sm, sessionFields)})
+		return
+	}
+
+	if strings.TrimSpace(body.Goal) == "" {
+		writeJSON(w, 400, map[string]any{"error": "goal required for an agent session"})
+		return
+	}
+
+	req := map[string]any{"type": "session:create", "projectId": body.ProjectID}
+	if body.Goal != "" {
+		req["goal"] = body.Goal
+	}
+	if body.Name != "" {
+		req["name"] = body.Name
+	}
+	if body.NewBranch != "" {
+		req["newBranch"] = body.NewBranch
+	}
+	if body.Agent != "" {
+		agent := map[string]any{"agentName": body.Agent}
+		if body.Model != "" {
+			// The model is not a top-level field: the daemon derives the session's
+			// requestedModel from agent.options.model, checked in its create handler.
+			agent["options"] = map[string]any{"model": body.Model}
+		}
+		req["agent"] = agent
+	}
+
+	// Worktree creation plus agent startup is slow enough that the default
+	// timeout would report failure on a session that is in fact being born.
+	res, err := client.Call(req, "session:created", 90*time.Second)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	sm, _ := res["session"].(map[string]any)
+	id, _ := sm["id"].(string)
+	log.Printf("created session %s (project=%s agent=%s terminal=%v)", id, body.ProjectID, body.Agent, body.UseTerminal)
+	writeJSON(w, 200, map[string]any{"ok": true, "session": project(sm, sessionFields)})
+}
+
+// ---- git ----
+
+// sessionGit reports the working tree state for a session's checkout: branch plus
+// a count of changed files, so you can see from a phone whether an agent has left
+// work uncommitted.
+func sessionGit(w http.ResponseWriter, r *http.Request, id string) {
+	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	sm, _ := res["session"].(map[string]any)
+	if sm == nil {
+		writeJSON(w, 404, map[string]any{"error": "session not found"})
+		return
+	}
+	projectID, _ := sm["projectId"].(string)
+	worktree, _ := sm["worktreePath"].(string)
+	if projectID == "" {
+		writeJSON(w, 200, map[string]any{"unavailable": "session has no project"})
+		return
+	}
+
+	req := map[string]any{"type": "git:status", "projectId": projectID}
+	if worktree != "" {
+		req["worktreePath"] = worktree
+	}
+	gres, err := client.Call(req, "git:status", 20*time.Second)
+	if err != nil {
+		// A session on a deleted worktree answers git:error, which Call surfaces as
+		// an error. That is not a failure of this request.
+		writeJSON(w, 200, map[string]any{"unavailable": err.Error()})
+		return
+	}
+	status, _ := gres["status"].(map[string]any)
+	files, _ := status["files"].([]any)
+
+	var staged, modified, untracked int
+	for _, f := range files {
+		fm, ok := f.(map[string]any)
+		if !ok {
+			continue
+		}
+		if s, _ := fm["staged"].(bool); s {
+			staged++
+			continue
+		}
+		if st, _ := fm["status"].(string); st == "?" {
+			untracked++
+		} else {
+			modified++
+		}
+	}
+	branch, _ := status["branch"].(string)
+	writeJSON(w, 200, map[string]any{
+		"branch":    branch,
+		"staged":    staged,
+		"modified":  modified,
+		"untracked": untracked,
+		"clean":     len(files) == 0,
+		"total":     len(files),
+	})
+}
