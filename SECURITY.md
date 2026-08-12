@@ -11,9 +11,10 @@ equivalent to a terminal on that machine.
 - **An access key, if you set one.** `xirp-remote install --generate-key` requires one;
   without it the service runs open. Keys are compared in constant time, wrong keys are
   delayed, and the key is held in an `HttpOnly` `SameSite=Lax` cookie.
-- **A narrow allowlist.** Sixteen of the daemon's 212 message types are reachable. Git
-  writes, terminal attach, session deletion and every settings mutation are not proxied.
-  Control keys sent to a pane are allowlisted by name.
+- **A narrow allowlist.** 33 of the daemon's 212 message types are reachable, counted
+  from the `"type"` fields this code sends. Git writes, terminal attach, session deletion
+  and every settings mutation are not proxied — the one `settings:` call is
+  `getModels`, a read. Control keys sent to a pane are allowlisted by name.
 - **Cross-origin only with a key.** Origins are echoed only when a key is required, so an
   open instance cannot be driven by a page you happen to visit.
 - **No API caching.** The service worker caches the UI shell and never API responses.

@@ -84,21 +84,22 @@ that can only return nothing.
   [`docs/protocol.md`](docs/protocol.md#why-there-is-no-remote-approval-of-permission-prompts).
 - **Write to git, attach a terminal, delete a session, or change any app setting.**
   33 of the daemon's 212 message types are reachable; `git:` writes, `terminal:`,
-  `session:delete` and all of `settings:` are simply not proxied.
+  `session:delete` and every `settings:` mutation are simply not proxied. The one
+  `settings:` call is `getModels`, which reads the model list for the new-session sheet.
 - **Run anywhere but macOS**, for the reason in Requirements.
 
 ## Security
 
-**As deployed it runs open, with no authentication** — a deliberate choice, because on
-this network the boundary is the network. It can type into agent sessions, which is
-arbitrary code execution on the Mac as the user running Xirp, so what contains it is
-that it is reachable only over the LAN or a WireGuard tunnel, with no port forward and
-no public hostname.
+This app can type into agent sessions, which is arbitrary code execution on the Mac as
+the user running Xirp. Treat it accordingly: keep it on your own network, with no port
+forward and no public hostname.
 
-Setting a key re-enables the login gate at any time
-(`xirp-remote install --key <32+ hex chars>`): compared in constant time, wrong keys
-delayed 400 ms, held in an `HttpOnly` `SameSite=Lax` cookie. Cross-origin access is
-enabled **only** when a key is required, since on an open instance echoing the origin
+`install --generate-key` mints an access key and turns on the login gate, which is the
+default worth using. The key is compared in constant time, wrong keys are delayed 400 ms,
+and it is held in an `HttpOnly` `SameSite=Lax` cookie; the pairing QR carries it in the
+URL fragment so it never reaches a server log. `install --no-key` runs it open instead,
+which is only reasonable when the network itself is the boundary. Cross-origin access is
+enabled **only** when a key is required — on an open instance, echoing the origin back
 would let any page you happen to visit drive your sessions.
 
 Full threat model and how to report something: [`SECURITY.md`](SECURITY.md).
