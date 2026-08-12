@@ -50,7 +50,7 @@ jobs:
           [ -n "${KEYSTORE_B64:-}" ]      || missing="$missing ANDROID_KEYSTORE_BASE64"
           [ -n "${KEYSTORE_PASSWORD:-}" ] || missing="$missing ANDROID_KEYSTORE_PASSWORD"
           [ -n "${KEY_PASSWORD:-}" ]      || missing="$missing ANDROID_KEY_PASSWORD"
-          [ -n "${KEY_ALIAS:-}" ]         || missing="$missing ANDROID_KEY_ALIAS
+          [ -n "${KEY_ALIAS:-}" ]         || missing="$missing ANDROID_KEY_ALIAS"
           if [ -n "$missing" ]; then
             cat >&2 <<MSG
           Missing repository secrets:$missing
