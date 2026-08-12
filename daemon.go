@@ -31,43 +31,99 @@ var (
 	portRe  = regexp.MustCompile(`CHIRP_DAEMON_PORT=([0-9]+)`)
 )
 
-// discover reads the token out of the running app's process environment. `ps -E`
-// only exposes the environment of processes owned by the same user, which is the
-// property this relies on: the bridge must run as the user running Xirp.
+// discover finds the daemon's port and token.
+//
+// Both come from the app, and neither is where you would first look:
+//
+//   - The port comes from ~/.chirp/daemon-external.port, which the app rewrites when
+//     it starts. The CHIRP_DAEMON_PORT variable in a process environment cannot be
+//     trusted, because an environment is fixed when the process is exec'd: after the
+//     app restarts its daemon on a new port, every process started before that still
+//     advertises the old one. Observed exactly that — eleven processes claiming :50389
+//     while the daemon was on :53546.
+//
+//   - The token comes from the environment of whichever process is *listening* on that
+//     port. Reading the first Xirp process that happens to have a CHIRP_WS_TOKEN picks
+//     up a stale token from a session started before the restart, which then fails
+//     authentication against the live daemon.
+//
+// `ps -E` only exposes an environment to the same user, which is the property this
+// relies on and the reason this must run as the user running Xirp.
 func discover() (Creds, error) {
 	var c Creds
 
+	home, _ := os.UserHomeDir()
+	if b, err := os.ReadFile(filepath.Join(home, ".chirp", "daemon-external.port")); err == nil {
+		c.Port = strings.TrimSpace(string(b))
+	}
+
+	// Ask who is listening. That pid's environment holds the matching token.
+	if c.Port != "" {
+		if out, err := exec.Command("lsof", "-nP", "-iTCP:"+c.Port, "-sTCP:LISTEN", "-t").Output(); err == nil {
+			for _, pid := range strings.Fields(string(out)) {
+				if tok := tokenOfPID(pid); tok != "" {
+					c.Token = tok
+					return c, nil
+				}
+			}
+		}
+	}
+
+	// Fall back to scanning the app's processes. Prefer one whose advertised port
+	// matches the port file, and only then take any token at all.
 	pgrep := exec.Command("pgrep", "-f", "Xirp")
 	out, err := pgrep.Output()
 	if err != nil {
 		return c, fmt.Errorf("no Xirp process found (is the app running?): %w", err)
 	}
+	var anyToken, anyPort string
 	for _, pid := range strings.Fields(string(out)) {
 		env, err := exec.Command("ps", "-E", "-o", "command=", "-p", pid).Output()
 		if err != nil {
 			continue
 		}
+		tok := ""
 		if m := tokenRe.FindSubmatch(env); m != nil {
-			c.Token = string(m[1])
-			if p := portRe.FindSubmatch(env); p != nil {
-				c.Port = string(p[1])
-			}
-			break
+			tok = string(m[1])
+		}
+		if tok == "" {
+			continue
+		}
+		port := ""
+		if p := portRe.FindSubmatch(env); p != nil {
+			port = string(p[1])
+		}
+		if c.Port != "" && port == c.Port {
+			c.Token = tok
+			return c, nil
+		}
+		if anyToken == "" {
+			anyToken, anyPort = tok, port
 		}
 	}
-	if c.Token == "" {
+	if anyToken == "" {
 		return c, fmt.Errorf("found Xirp processes but none exposed CHIRP_WS_TOKEN")
 	}
+	c.Token = anyToken
 	if c.Port == "" {
-		// Fall back to the port file the app maintains.
-		home, _ := os.UserHomeDir()
-		b, err := os.ReadFile(filepath.Join(home, ".chirp", "daemon-external.port"))
-		if err != nil {
-			return c, fmt.Errorf("token found but no port (env or ~/.chirp): %w", err)
-		}
-		c.Port = strings.TrimSpace(string(b))
+		c.Port = anyPort
+	}
+	if c.Port == "" {
+		return c, fmt.Errorf("token found but no port (neither ~/.chirp/daemon-external.port nor the environment)")
 	}
 	return c, nil
+}
+
+// tokenOfPID reads CHIRP_WS_TOKEN out of one process's environment.
+func tokenOfPID(pid string) string {
+	env, err := exec.Command("ps", "-E", "-o", "command=", "-p", pid).Output()
+	if err != nil {
+		return ""
+	}
+	if m := tokenRe.FindSubmatch(env); m != nil {
+		return string(m[1])
+	}
+	return ""
 }
 
 // Client is a request/response wrapper over the daemon's WebSocket.
