@@ -1,0 +1,77 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Build both architectures and a universal binary
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+
+          # Each arch is built into its own directory so the archive can contain a
+          # plainly named binary. macOS ships bsdtar, which has no --transform.
+          for arch in arm64 amd64; do
+            mkdir -p "dist/$arch"
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" \
+              go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+              -o "dist/$arch/xirp-remote" .
+            tar czf "dist/xirp-remote_${VERSION}_darwin_${arch}.tar.gz" -C "dist/$arch" xirp-remote
+          done
+
+          # One download that runs on Apple Silicon and Intel, so the instructions do
+          # not have to ask which Mac you have.
+          mkdir -p dist/universal
+          lipo -create -output dist/universal/xirp-remote \
+            dist/arm64/xirp-remote dist/amd64/xirp-remote
+          lipo -archs dist/universal/xirp-remote
+          tar czf "dist/xirp-remote_${VERSION}_darwin_universal.tar.gz" -C dist/universal xirp-remote
+
+          cd dist && shasum -a 256 *.tar.gz > SHA256SUMS && cat SHA256SUMS
+
+      - name: Smoke-test the built binary
+        run: |
+          # A release that cannot report its own version is not a release.
+          ./dist/universal/xirp-remote version
+          ./dist/universal/xirp-remote version | grep -q "${GITHUB_REF_NAME}"
+          ./dist/universal/xirp-remote interfaces >/dev/null
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/*.tar.gz dist/SHA256SUMS \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --notes "Install:
+
+          \`\`\`sh
+          curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.sh | sh
+          \`\`\`
+
+          Then:
+
+          \`\`\`sh
+          xirp-remote install --generate-key
+          \`\`\`
+
+          which prints a QR code to scan with your phone.
+
+          The binary is universal (Apple Silicon and Intel) and unsigned — it is
+          downloaded with curl rather than a browser, so Gatekeeper does not quarantine
+          it. macOS only: it reads the Xirp app's process environment and drives tmux."

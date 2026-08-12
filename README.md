@@ -93,18 +93,42 @@ node_modules, no database.
 
 ## Running it as a service
 
+No build needed — download the release:
+
 ```sh
-go install github.com/AboveColin/remote-for-xirp@latest   # installs the binary as xirp-remote
-xirp-remote install                                       # installs a launchd user agent and starts it
-xirp-remote status
+curl -fsSL https://raw.githubusercontent.com/AboveColin/remote-for-xirp/main/install.sh | sh
 ```
 
-Or from a clone:
+That drops a universal binary (Apple Silicon and Intel) into `~/.local/bin` and stops.
+Nothing starts listening because you piped a script into a shell; starting it is one
+explicit command:
+
+```sh
+xirp-remote interfaces                # which address can a phone reach?
+xirp-remote install --generate-key    # start it, and print a QR code to scan
+```
+
+`install` writes a launchd user agent, so it comes back at login and after a crash.
+
+<details>
+<summary>Other ways in</summary>
+
+```sh
+go install github.com/AboveColin/remote-for-xirp@latest   # binary is named xirp-remote
+```
+
+or from a clone:
 
 ```sh
 go build -o xirp-remote .
 ./xirp-remote install
 ```
+
+The release binaries are unsigned. `install.sh` fetches them with curl rather than a
+browser, so Gatekeeper does not quarantine them; if you download by hand in a browser,
+run `xattr -d com.apple.quarantine xirp-remote` first.
+
+</details>
 
 The command is `xirp-remote`; the repository is `remote-for-xirp`.
 
@@ -116,6 +140,21 @@ The command is `xirp-remote`; the repository is `remote-for-xirp`.
 | `status` | Service, HTTP and Xirp daemon state, plus the session count. |
 | `logs [-f]` | Tail `~/Library/Logs/xirp-remote.log`. |
 | `qr` | Print a pairing QR code and its URL. |
+| `interfaces` | List the addresses this can serve on, marking the default route. |
+| `version` | Print the version. |
+
+By default it listens on every interface and the pairing code advertises whichever
+address holds the default route. On a laptop with Wi-Fi, a VPN and a few virtual
+bridges that guess can be wrong, so it can be pinned:
+
+```sh
+xirp-remote interfaces                       # see what is available
+xirp-remote install --interface en0          # serve on that interface only
+xirp-remote install --bind 192.168.1.50      # or on one address
+```
+
+The bound address is also the one encoded in the pairing QR, so the code always points
+at somewhere the phone can actually reach.
 
 Re-running `install` preserves the existing key, URL and address; flags override them
 and `--no-key` removes the key deliberately. That is not a nicety: an earlier version

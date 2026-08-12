@@ -145,6 +145,33 @@ func cmdInstall(args []string) error {
 				key = args[i+1]
 				i++
 			}
+		case "--interface":
+			if i+1 < len(args) {
+				addr2, err := resolveInterface(args[i+1])
+				if err != nil {
+					return err
+				}
+				_, port, _ := net.SplitHostPort(addr)
+				if port == "" {
+					port = "8790"
+				}
+				addr = net.JoinHostPort(addr2, port)
+				i++
+			}
+		case "--bind":
+			if i+1 < len(args) {
+				host := args[i+1]
+				_, port, _ := net.SplitHostPort(addr)
+				if port == "" {
+					port = "8790"
+				}
+				if strings.Contains(host, ":") {
+					addr = host
+				} else {
+					addr = net.JoinHostPort(host, port)
+				}
+				i++
+			}
 		case "--url":
 			if i+1 < len(args) {
 				publicURL = strings.TrimRight(args[i+1], "/")
@@ -371,12 +398,16 @@ USAGE
   xirp-remote status               Service, HTTP and Xirp daemon state
   xirp-remote logs [-f]            Show the service log
   xirp-remote qr                   Print a pairing QR code for a phone
+  xirp-remote interfaces           List addresses this can serve on
+  xirp-remote version              Print the version
 
 INSTALL FLAGS
   --addr <host:port>   Listen address (default 0.0.0.0:8790)
   --key <key>          Require this access key (default: open, no auth)
   --generate-key       Generate a random access key and show its pairing QR
   --no-key             Remove the access key (run open, no authentication)
+  --interface <name>   Serve on one interface only (see: xirp-remote interfaces)
+  --bind <address>     Serve on one address only (default 0.0.0.0, every interface)
   --url <base>         Public base URL to encode in pairing QR codes
   --no-copy            Run from the current binary path instead of ~/.local/bin
 
@@ -429,6 +460,11 @@ func runCLI(args []string) (handled bool, err error) {
 		return true, cmdLogs(args[1:])
 	case "qr", "pair":
 		return true, cmdQR()
+	case "interfaces", "ifaces":
+		return true, cmdInterfaces()
+	case "version", "--version", "-v":
+		fmt.Printf("xirp-remote %s\n", version)
+		return true, nil
 	case "-h", "--help", "help":
 		usage()
 		return true, nil

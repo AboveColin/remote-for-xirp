@@ -29,6 +29,10 @@ const cookieName = "xr_key"
 // still shows its command and the start of its output.
 const toolTextCap = 400
 
+// Set at build time: -ldflags "-X main.version=v0.1.0". A release binary that cannot
+// say what it is makes every bug report start with a guess.
+var version = "dev"
+
 var (
 	client    = NewClient()
 	remoteKey string
@@ -110,7 +114,7 @@ func main() {
 	mux.Handle("/api/permissions/", authed(http.HandlerFunc(handlePermissionRespond)))
 	mux.Handle("/", static)
 
-	log.Printf("xirp-remote listening on %s", addr)
+	log.Printf("xirp-remote %s listening on %s", version, addr)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler(mux),

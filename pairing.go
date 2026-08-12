@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 
 	qrcode "github.com/skip2/go-qrcode"
@@ -29,32 +28,15 @@ func generateKey() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// lanAddress guesses the address a phone should use. The listen address is usually
-// 0.0.0.0, which is useless in a URL.
+// lanAddress turns the listen address into something a phone can open. The listen
+// address is usually 0.0.0.0, which is useless in a URL, so the advertised host comes
+// from the chosen bind address or the default route.
 func lanAddress(addr string) string {
-	_, port, err := net.SplitHostPort(addr)
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		port = "8790"
+		host, port = "", "8790"
 	}
-	host := ""
-	if _, p, err := net.SplitHostPort(addr); err == nil {
-		_ = p
-	}
-	if h, _, err := net.SplitHostPort(addr); err == nil && h != "" && h != "0.0.0.0" && h != "::" {
-		host = h
-	}
-	if host == "" {
-		// Prefer the address on the default route, which is the one a phone on the
-		// same network can reach.
-		out, err := exec.Command("ipconfig", "getifaddr", "en0").Output()
-		if err == nil {
-			host = strings.TrimSpace(string(out))
-		}
-	}
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	return net.JoinHostPort(host, port)
+	return net.JoinHostPort(advertiseAddress(host), port)
 }
 
 // pairingURL prefers an explicit public URL, since a reverse proxy hostname is what
