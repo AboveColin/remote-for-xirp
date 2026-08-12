@@ -2,7 +2,7 @@
 
 **See and steer your coding agents from your phone.**
 
-A mobile web app for the [Xirp](https://xirp.dev) desktop app's agent daemon, so the
+A mobile web app for [Xirp](https://xirp.dev), the agent desktop app from Spotify, so the
 sessions running on your Mac — Claude Code, Codex, Gemini, or whatever else Xirp is
 driving — can be watched and answered from an iPhone or Android without going back to
 the desk. It runs on your own network, not through anyone's cloud.
@@ -10,10 +10,11 @@ the desk. It runs on your own network, not through anyone's cloud.
 One Go binary with the UI embedded. No build step for the front end, no node_modules,
 no database.
 
-> **Unofficial.** Not affiliated with, endorsed by, or derived from Xirp. This
-> repository contains no code, stylesheets, icons or assets from the Xirp application —
-> only this project's own implementation of a client for the daemon's local WebSocket
-> API. "Xirp" names the thing it talks to.
+> **Unofficial.** Xirp is a Spotify product. This project is not made, endorsed or
+> supported by Spotify, and is not derived from Xirp: the repository contains no code,
+> stylesheets, icons or assets from the application — only this project's own client for
+> the daemon's local WebSocket API. "Xirp" and "Spotify" are used to name what this talks
+> to, and are trademarks of their owner.
 
 <p align="center">
   <img src="site/screenshots/machines.png" alt="The machines screen" width="240" />
@@ -48,7 +49,7 @@ Building from source, every CLI subcommand, and pinning which address it serves 
 | | |
 |---|---|
 | **macOS** | Not incidental. The daemon's access token exists only in the Xirp app's process environment, which `ps -E` exposes to the same user and nobody else — so this has to run as you, on that machine. |
-| **Xirp, running** | Sessions come from the local daemon. When the app is quit there is nothing to control. |
+| **Xirp, running** | Sessions come from the local daemon of Xirp itself, Spotify's agent desktop app. This does not replace it: when the app is quit there is nothing to control. |
 | **A phone on the same network** | Or reaching the machine over a VPN. |
 | **Go 1.26+** | Only to build it yourself. Nothing else: no Node, no package manager, no database. |
 

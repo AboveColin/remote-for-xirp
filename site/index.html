@@ -2,11 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Remote For Xirp — see and steer your coding agents from your phone</title>
+    <title>Remote For Xirp — control Xirp by Spotify from your phone</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="A mobile web app for the Xirp agent daemon. Watch and answer Claude Code, Codex and Gemini sessions running on your Mac from an iPhone or Android, on your own network. Free, MIT, one binary."
+      content="A phone remote for Xirp, the agent desktop app from Spotify: watch and answer the Claude Code, Codex and Gemini sessions running on your Mac. Free, MIT, unofficial."
     />
     <link rel="canonical" href="https://remote-for-xirp.cdevries.dev/" />
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
@@ -20,10 +20,10 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Remote For Xirp" />
     <meta property="og:locale" content="en_US" />
-    <meta property="og:title" content="Remote For Xirp — control your coding agents from your phone" />
+    <meta property="og:title" content="Remote For Xirp — control Xirp by Spotify from your phone" />
     <meta
       property="og:description"
-      content="See and steer your coding agents from your phone. A mobile web app for the Xirp agent daemon — Claude Code, Codex, Gemini — on your own network."
+      content="See and steer your coding agents from your phone. A mobile web app for Xirp, the agent desktop app from Spotify — Claude Code, Codex, Gemini — on your own network. Unofficial."
     />
     <meta property="og:url" content="https://remote-for-xirp.cdevries.dev/" />
     <meta property="og:image" content="https://remote-for-xirp.cdevries.dev/og.png" />
@@ -38,7 +38,7 @@
     <meta name="twitter:title" content="Remote For Xirp" />
     <meta
       name="twitter:description"
-      content="Watch and answer the Claude Code, Codex and Gemini sessions running on your Mac, from your phone, on your own network."
+      content="Watch and answer the Claude Code, Codex and Gemini sessions that Xirp by Spotify is running on your Mac, from your phone, on your own network."
     />
     <meta name="twitter:image" content="https://remote-for-xirp.cdevries.dev/og.png" />
 
@@ -56,6 +56,7 @@
             "applicationCategory": "DeveloperApplication",
             "applicationSubCategory": "Remote control for coding agents",
             "operatingSystem": "macOS (host), iOS and Android (browser)",
+            "softwareRequirements": "Xirp, the agent desktop app from Spotify, installed and running on macOS",
             "url": "https://remote-for-xirp.cdevries.dev/",
             "downloadUrl": "https://github.com/AboveColin/remote-for-xirp/releases/latest",
             "installUrl": "https://github.com/AboveColin/remote-for-xirp#install",
@@ -149,10 +150,18 @@
               },
               {
                 "@type": "Question",
-                "name": "Is this made by the Xirp developers?",
+                "name": "Is this made by Spotify or by the Xirp developers?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "No. It is an unaffiliated project that talks to the daemon's local API, and it is MIT licensed."
+                  "text": "No. Xirp is a Spotify product; this is an unaffiliated third-party app that talks to the Xirp daemon's local API on your own machine. It is not made, endorsed or supported by Spotify, and it is MIT licensed."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What is Xirp?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Xirp is a desktop app from Spotify for running coding agents — Claude Code, Codex, Gemini and others — in parallel git worktrees on macOS. It exposes a local WebSocket API on the machine it runs on, which is what this app talks to. Remote For Xirp does not replace it: Xirp has to be installed and running."
                 }
               }
             ]
@@ -352,8 +361,8 @@
         <h1>Remote For Xirp</h1>
         <p class="tagline">See and steer your coding agents from your phone.</p>
         <p class="sub">
-          A mobile web app for the <a href="https://xirp.dev">Xirp</a> desktop app's agent
-          daemon. The sessions running on your Mac — Claude Code, Codex, Gemini, or whatever
+          A mobile web app for <a href="https://xirp.dev">Xirp</a>, the agent desktop app
+          from Spotify. The sessions running on your Mac — Claude Code, Codex, Gemini, or whatever
           else Xirp is driving — can be watched and answered from an iPhone or Android
           without going back to the desk. It runs on your own network, not through anyone's
           cloud.
@@ -562,15 +571,26 @@ xirp-remote install --generate-key # start it, and print a QR code</code></pre>
         </p>
       </details>
       <details class="faq">
-        <summary>Is this made by the Xirp developers?</summary>
+        <summary>Is this made by Spotify or by the Xirp developers?</summary>
         <p>
-          No. It is an unaffiliated project that talks to the daemon's local API, and it is
-          MIT licensed.
+          No. Xirp is a Spotify product; this is an unaffiliated third-party app that talks
+          to the Xirp daemon's local API on your own machine. It is not made, endorsed or
+          supported by Spotify, and it is MIT licensed.
+        </p>
+      </details>
+      <details class="faq">
+        <summary>What is Xirp?</summary>
+        <p>
+          Xirp is a desktop app from Spotify for running coding agents — Claude Code, Codex,
+          Gemini and others — in parallel git worktrees on macOS. It exposes a local
+          WebSocket API on the machine it runs on, which is what this app talks to. This
+          does not replace it: Xirp has to be installed and running.
         </p>
       </details>
 
       <footer>
-        MIT licensed · unofficial, not affiliated with Xirp ·
+        MIT licensed · unofficial · not affiliated with, endorsed by or supported by
+        Spotify · Xirp is a trademark of its owner ·
         <a href="https://github.com/AboveColin/remote-for-xirp">source</a>
       </footer>
     </div>

@@ -1,13 +1,13 @@
 # Remote For Xirp
 
-> A mobile web app that lets you watch and answer the coding-agent sessions running in the Xirp desktop app on your Mac — Claude Code, Codex, Gemini — from a phone on your own network. One Go binary, MIT licensed, unofficial and not affiliated with Xirp.
+> A mobile web app that lets you watch and answer the coding-agent sessions running in Xirp — the agent desktop app from Spotify — on your Mac, from a phone on your own network. Claude Code, Codex, Gemini, or whatever else Xirp is driving. One Go binary, MIT licensed. Unofficial: not made, endorsed or supported by Spotify.
 
-It talks to the Xirp daemon's local WebSocket API and serves a phone-shaped web app over HTTP on your LAN. Nothing is proxied through a third party and there is no account: pairing is a QR code holding the address and an access key.
+Xirp is a Spotify product for running coding agents in parallel git worktrees on macOS, and it exposes a local WebSocket API on the machine it runs on. This project talks to that API and serves a phone-shaped web app over HTTP on your LAN. Nothing is proxied through a third party and there is no account: pairing is a QR code holding the address and an access key.
 
 Facts worth having straight, because they are the ones most often guessed wrong:
 
 - The host must be macOS. This is not a portability gap: the daemon's auth token exists only in the Xirp app's process environment, readable by the same user and nobody else.
-- The Xirp desktop app has to be running. When it is quit there is no daemon and nothing to control.
+- Xirp itself, from Spotify, has to be installed and running. This does not replace it: when the app is quit there is no daemon and nothing to control.
 - It reaches 33 of the daemon's 212 message types. Git writes, terminal attach, session deletion and settings changes are deliberately absent.
 - Remote approval of permission prompts does not exist. The daemon holds a request open for roughly half a second before falling through to the agent's own dialog, which no polling client can catch.
 - Installing does not start anything. `install.sh` places a binary and stops; `xirp-remote install` is the separate, explicit step that starts the service and prints the QR code.
@@ -32,4 +32,4 @@ Facts worth having straight, because they are the ones most often guessed wrong:
 
 ## Optional
 
-- [The Xirp desktop app](https://xirp.dev): the thing being remote-controlled. Separate project, not ours.
+- [Xirp](https://xirp.dev): the desktop app from Spotify that this remote-controls. Separate product, not ours, and not affiliated with this project.
