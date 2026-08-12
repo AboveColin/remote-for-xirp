@@ -194,6 +194,7 @@ var sessionFields = []string{
 	"projectId", "branch", "worktreePath", "contextTokens", "contextWindowSize",
 	"totalCostUsd", "inputTokens", "outputTokens", "lastActivityAt", "lastMessageAt",
 	"createdAt", "completedAt", "lastUserMessage", "parentSessionId", "tags",
+	"cliSessionId", "originalCliSessionId",
 }
 
 func project(src map[string]any, fields []string) map[string]any {
@@ -311,6 +312,14 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 		sessionPane(w, r, id)
 	case "keys":
 		sessionKeys(w, r, id)
+	case "changes":
+		sessionChanges(w, r, id)
+	case "diff":
+		sessionFileDiff(w, r, id)
+	case "fork":
+		sessionFork(w, r, id)
+	case "swap":
+		sessionSwapAgent(w, r, id)
 	default:
 		writeJSON(w, 404, map[string]any{"error": "unknown action " + action})
 	}

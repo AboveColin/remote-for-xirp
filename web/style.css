@@ -1497,3 +1497,148 @@ textarea:focus {
   font-size: 12px;
   color: var(--text);
 }
+
+/* ---- changes and diffs ---- */
+
+.changes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+}
+.changes h3 {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 12px 2px 2px;
+}
+.changes h3:first-child {
+  margin-top: 0;
+}
+.filerow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.filerow:active {
+  border-color: var(--accent);
+}
+.filestat {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--surface-hi);
+  color: var(--text-dim);
+}
+.filestat.st-M {
+  color: var(--warn);
+}
+.filestat.st-A {
+  color: var(--ok);
+}
+.filestat.st-D {
+  color: var(--danger);
+}
+.filepath {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  /* The end of a path is the part that identifies the file, so keep the tail. */
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filenums {
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.filenums .add {
+  color: var(--ok);
+}
+.filenums .del {
+  color: var(--danger);
+}
+
+.pr-card {
+  margin: 12px 14px 0;
+  padding: 11px 13px;
+  border: 1px solid var(--info);
+  border-radius: var(--radius-lg);
+  background: rgba(79, 156, 249, 0.08);
+  font-size: 13px;
+}
+.pr-card a {
+  color: var(--info);
+}
+
+.diffbody {
+  padding: 10px 0 calc(20px + env(safe-area-inset-bottom));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-x: auto;
+}
+.diffline {
+  white-space: pre;
+  padding: 0 12px;
+}
+.diffline.add {
+  background: rgba(53, 196, 106, 0.12);
+  color: #b8f0cd;
+}
+.diffline.del {
+  background: rgba(229, 72, 77, 0.12);
+  color: #f6c2c4;
+}
+.diffline.hunk {
+  color: var(--accent-hi);
+  background: var(--surface);
+  margin: 6px 0 2px;
+}
+.diffline.meta {
+  color: var(--text-dim);
+}
+
+.sheet-h {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 18px 0 2px;
+}
+.sheet-h:first-of-type {
+  margin-top: 4px;
+}
+#handover-sheet .sheet-card input,
+#handover-sheet .sheet-card select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-hi);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 11px 12px;
+  width: 100%;
+  margin-top: 6px;
+}
+#handover-sheet .btn {
+  width: 100%;
+  margin-top: 10px;
+}

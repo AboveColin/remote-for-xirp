@@ -25,6 +25,8 @@ const views = {
   detail: el('detail-view'),
   settings: el('settings-view'),
   diag: el('diag-view'),
+  changes: el('changes-view'),
+  diff: el('diff-view'),
 };
 
 // ---- settings ----
@@ -358,6 +360,231 @@ el('sessions-back').addEventListener('click', () => {
   renderFolders();
 });
 el('projects-new').addEventListener('click', openCreateSheet);
+
+// ---- fork, and handing a session to another agent ----
+
+async function openHandover() {
+  const sheet = el('handover-sheet');
+  el('handover-error').hidden = true;
+  sheet.hidden = false;
+  // The agent list comes from the same place the create sheet uses, so only agents
+  // that are actually installed are offered.
+  const sel = el('swap-agent');
+  if (!sel.options.length) {
+    try {
+      const meta = await api('/api/meta');
+      for (const a of meta.agents || []) {
+        const o = document.createElement('option');
+        o.value = a.agentName;
+        o.textContent = a.version ? `${a.agentName} ${a.version}` : a.agentName;
+        sel.append(o);
+      }
+    } catch (e) {
+      el('handover-error').textContent = e.message;
+      el('handover-error').hidden = false;
+    }
+  }
+}
+
+function closeHandover() {
+  el('handover-sheet').hidden = true;
+}
+
+async function handover(path, body, label, btn) {
+  if (!state.sessionId) return;
+  const err = el('handover-error');
+  err.hidden = true;
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = `${label}…`;
+  try {
+    const res = await api(`/api/sessions/${encodeURIComponent(state.sessionId)}/${path}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    closeHandover();
+    await refreshList();
+    if (res.session && res.session.id && res.session.id !== state.sessionId) {
+      toast('Forked');
+      openSession(res.session.id);
+    } else {
+      toast(`Handed to ${res.agent}`);
+      refreshDetail();
+    }
+  } catch (e) {
+    err.textContent = e.message;
+    err.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+el('open-handover').addEventListener('click', openHandover);
+el('handover-close').addEventListener('click', closeHandover);
+el('handover-sheet').addEventListener('click', (e) => {
+  if (e.target === el('handover-sheet')) closeHandover();
+});
+el('fork-go').addEventListener('click', (e) =>
+  handover('fork', { newBranch: el('fork-branch').value.trim() }, 'Forking', e.target)
+);
+el('swap-go').addEventListener('click', (e) =>
+  handover('swap', { agent: el('swap-agent').value, reason: 'handed over from the phone' }, 'Handing over', e.target)
+);
+
+// ---- changes and diffs ----
+//
+// Two questions, kept separate because the answers differ: what is changed but not
+// committed, and what this branch has done against its base. The daemon returns a ready
+// unified diff per file, so this only has to render one.
+
+function fileRow(f, mode, sessionId) {
+  const row = document.createElement('button');
+  row.className = 'filerow';
+  row.addEventListener('click', () => openDiff(sessionId, f.path, mode));
+
+  const stat = document.createElement('span');
+  const st = (f.status || '?').slice(0, 1);
+  stat.className = `filestat st-${st}`;
+  stat.textContent = st;
+
+  const path = document.createElement('span');
+  path.className = 'filepath';
+  // With direction:rtl the browser keeps the end of the path visible; the wrapping
+  // marks stop the leading slash being rendered on the wrong side.
+  path.textContent = `\u202a${f.path}\u202c`;
+
+  const nums = document.createElement('span');
+  nums.className = 'filenums';
+  if (f.additions) {
+    const a = document.createElement('span');
+    a.className = 'add';
+    a.textContent = `+${f.additions}`;
+    nums.append(a, document.createTextNode(' '));
+  }
+  if (f.deletions) {
+    const d = document.createElement('span');
+    d.className = 'del';
+    d.textContent = `-${f.deletions}`;
+    nums.append(d);
+  }
+
+  row.append(stat, path, nums);
+  return row;
+}
+
+async function refreshChanges() {
+  const id = state.sessionId;
+  if (!id) return;
+  const body = el('changes-body');
+  try {
+    const d = await api(`/api/sessions/${encodeURIComponent(id)}/changes`);
+    setLink(true);
+    body.innerHTML = '';
+    el('changes-sub').textContent = d.branch ? `${d.branch}${d.base ? ` → ${d.base}` : ''}` : '';
+
+    const pr = el('changes-pr');
+    if (d.pr && d.pr.url) {
+      pr.innerHTML = '';
+      const a = document.createElement('a');
+      a.href = d.pr.url;
+      a.target = '_blank';
+      a.rel = 'noreferrer';
+      a.textContent = `#${d.pr.number} ${d.pr.title || ''}`.trim();
+      pr.append(document.createTextNode(`${d.pr.state || 'PR'}${d.pr.isDraft ? ' (draft)' : ''} · `), a);
+      pr.hidden = false;
+    } else {
+      pr.hidden = true;
+    }
+
+    let total = 0;
+    const bd = d.branchDiff;
+    if (bd && bd.files && bd.files.length) {
+      const h = document.createElement('h3');
+      h.textContent = `This branch vs ${d.base}`;
+      body.append(h);
+      for (const f of bd.files) body.append(fileRow(f, 'branch', id));
+      total += bd.files.length;
+    }
+    const wt = d.worktree;
+    if (wt && wt.files && wt.files.length) {
+      const h = document.createElement('h3');
+      h.textContent = 'Not committed';
+      body.append(h);
+      for (const f of wt.files) body.append(fileRow(f, 'worktree', id));
+      total += wt.files.length;
+    }
+    if (!total) {
+      const p = document.createElement('p');
+      p.className = 'subdued';
+      p.textContent = d.unavailable || 'Nothing changed.';
+      body.append(p);
+    }
+    const untracked = (wt && wt.untracked) || 0;
+    el('changes-foot').textContent =
+      (d.branchDiffError ? `${d.branchDiffError} · ` : '') +
+      `${total} ${total === 1 ? 'file' : 'files'}` +
+      (untracked ? ` · ${compact(untracked)} untracked, not listed` : '');
+  } catch (e) {
+    if (e.message !== 'unauthorized') {
+      setLink(false, e.message);
+      body.textContent = e.message;
+    }
+  }
+}
+
+// A unified diff renders line by line. Nothing here reflows or wraps: a diff whose
+// columns do not line up is harder to read than one you have to scroll sideways.
+function renderDiff(text) {
+  const frag = document.createDocumentFragment();
+  for (const line of String(text).split('\n')) {
+    const div = document.createElement('div');
+    let cls = '';
+    if (line.startsWith('@@')) cls = 'hunk';
+    else if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('index ')) cls = 'meta';
+    else if (line.startsWith('+')) cls = 'add';
+    else if (line.startsWith('-')) cls = 'del';
+    div.className = `diffline ${cls}`.trim();
+    div.textContent = line || ' ';
+    frag.append(div);
+  }
+  return frag;
+}
+
+async function openDiff(sessionId, path, mode) {
+  show('diff');
+  el('diff-title').textContent = path.split('/').pop();
+  el('diff-sub').textContent = mode === 'branch' ? 'vs base branch' : 'not committed';
+  const body = el('diff-body');
+  body.innerHTML = '';
+  el('diff-foot').textContent = 'Loading…';
+  try {
+    const d = await api(
+      `/api/sessions/${encodeURIComponent(sessionId)}/diff?mode=${mode}&path=${encodeURIComponent(path)}`
+    );
+    if (d.unavailable) {
+      el('diff-foot').textContent = d.unavailable;
+      return;
+    }
+    body.append(renderDiff(d.diff || ''));
+    const lines = (d.diff || '').split('\n');
+    el('diff-foot').textContent =
+      `${lines.filter((l) => l.startsWith('+') && !l.startsWith('+++')).length} added, ` +
+      `${lines.filter((l) => l.startsWith('-') && !l.startsWith('---')).length} removed` +
+      (d.truncated ? ' · truncated' : '');
+  } catch (e) {
+    if (e.message !== 'unauthorized') el('diff-foot').textContent = e.message;
+  }
+}
+
+el('open-changes').addEventListener('click', () => {
+  show('changes');
+  el('changes-title').textContent = el('detail-name').textContent;
+  refreshChanges();
+});
+el('changes-refresh').addEventListener('click', refreshChanges);
+el('changes-back').addEventListener('click', () => show('detail'));
+el('diff-back').addEventListener('click', () => show('changes'));
 
 // ---- diagnostics ----
 //

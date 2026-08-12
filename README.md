@@ -68,6 +68,11 @@ node_modules, no database.
   strips it from the address bar as soon as it has a cookie.
 - **Installable PWA** with a service worker, so it lives on the home screen and opens
   full-screen. See `deploy/android/` to wrap it as an APK.
+- **Reviews the diff**: which files a session changed, both uncommitted and against the
+  base branch, with per-file additions and deletions, a rendered unified diff, and a link
+  to the branch's pull request when the daemon knows of one.
+- **Forks a conversation**, optionally onto a new branch and worktree, when an agent went
+  down the wrong path — and **hands a session to another agent**, keeping the history.
 - **Diagnostics**, from settings: whether the daemon is reachable and on which port,
   tmux availability and live pane count, the daemon's database load with its busiest
   tables, which feature modules the edition has, and the daemon's own log filtered to
@@ -244,7 +249,7 @@ the Mac as the user running Xirp. So what actually contains it is:
 - Cross-origin access is enabled **only when a key is required**. On an open instance,
   echoing an origin would let any web page you happen to visit read and drive your
   sessions.
-- Only an explicit allowlist of daemon messages is reachable — 22 of the daemon's
+- Only an explicit allowlist of daemon messages is reachable — 28 of the daemon's
   212 message types. It can list, read, search, message, stop and create sessions,
   and read git status. It cannot commit, push, open a PR, attach to a terminal,
   delete a session or change any app setting: `git:` writes, `terminal:`,
@@ -301,6 +306,10 @@ cookie from `POST /api/auth`. In open mode no credential is needed.
 | GET | `/api/pair[?format=png]` | Pairing URL, or a QR PNG of it. |
 | GET | `/api/diagnostics` | Daemon, tmux, database and module state. |
 | GET | `/api/logs?level=&limit=` | Daemon log records at or above a pino level. |
+| GET | `/api/sessions/{id}/changes` | Changed files: uncommitted and branch-vs-base, plus the PR. |
+| GET | `/api/sessions/{id}/diff?path=&mode=` | One file's unified diff (`worktree` or `branch`). |
+| POST | `/api/sessions/{id}/fork` | `{newBranch?, forkIntoWorktree?, agent?}`. |
+| POST | `/api/sessions/{id}/swap` | `{agent, reason?}`. |
 
 ### Four traps in the daemon's API worth knowing
 

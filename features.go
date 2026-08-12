@@ -378,3 +378,106 @@ func sessionGit(w http.ResponseWriter, r *http.Request, id string) {
 		"total":     len(files),
 	})
 }
+
+// ---- fork and hand over ----
+//
+// Both need the CLI session id, not just the session id: the daemon forks the agent's
+// own conversation, which it tracks separately from the session row. `sessions:list`
+// carries it as `cliSessionId`, so it is read from the session rather than asked for.
+
+func cliSessionID(sm map[string]any) string {
+	if v, _ := sm["cliSessionId"].(string); v != "" {
+		return v
+	}
+	// A resumed session keeps its first CLI id here; either identifies the transcript.
+	v, _ := sm["originalCliSessionId"].(string)
+	return v
+}
+
+// sessionFork branches a conversation. The usual reason is that an agent went down the
+// wrong path: fork from where it was still right, and leave the original alone.
+func sessionFork(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]any{"error": "POST only"})
+		return
+	}
+	var body struct {
+		NewBranch string `json:"newBranch"`
+		Worktree  bool   `json:"forkIntoWorktree"`
+		Agent     string `json:"agent"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body)
+
+	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	sm, _ := res["session"].(map[string]any)
+	if sm == nil {
+		writeJSON(w, 404, map[string]any{"error": "session not found"})
+		return
+	}
+	cli := cliSessionID(sm)
+	if cli == "" {
+		writeJSON(w, 400, map[string]any{"error": "this session has no CLI conversation to fork"})
+		return
+	}
+
+	req := map[string]any{"type": "session:fork", "sessionId": id, "cliSessionId": cli}
+	if pid, _ := sm["projectId"].(string); pid != "" {
+		req["projectId"] = pid
+	}
+	if body.NewBranch != "" {
+		req["newBranch"] = body.NewBranch
+		req["forkIntoWorktree"] = true
+	} else if body.Worktree {
+		req["forkIntoWorktree"] = true
+	}
+	if body.Agent != "" {
+		req["agent"] = map[string]any{"agentName": body.Agent}
+	}
+
+	// A fork can create a worktree, which is slow enough that the default timeout
+	// would report failure on a fork that is still being set up.
+	fres, err := client.Call(req, "session:created", 90*time.Second)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	nsm, _ := fres["session"].(map[string]any)
+	nid, _ := nsm["id"].(string)
+	log.Printf("forked session %s -> %s (branch=%q agent=%q)", id, nid, body.NewBranch, body.Agent)
+	writeJSON(w, 200, map[string]any{"ok": true, "session": project(nsm, sessionFields)})
+}
+
+// sessionSwapAgent hands a session to a different agent, keeping the conversation.
+func sessionSwapAgent(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]any{"error": "POST only"})
+		return
+	}
+	var body struct {
+		Agent  string `json:"agent"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body); err != nil || body.Agent == "" {
+		writeJSON(w, 400, map[string]any{"error": "agent required"})
+		return
+	}
+
+	req := map[string]any{"type": "session:swap-agent", "sessionId": id, "agentName": body.Agent}
+	if body.Reason != "" {
+		req["reason"] = body.Reason
+	}
+	// The daemon answers session:agent-swapped on success and its own error type on
+	// failure; Call surfaces a generic `error` reply too.
+	res, err := client.Call(req, "session:agent-swapped", 60*time.Second)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	log.Printf("swapped session %s to agent %s", id, body.Agent)
+	sm, _ := res["session"].(map[string]any)
+	writeJSON(w, 200, map[string]any{"ok": true, "agent": body.Agent, "session": project(sm, sessionFields)})
+}

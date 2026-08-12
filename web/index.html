@@ -162,6 +162,8 @@
           <span id="detail-name">Session</span>
           <span id="detail-sub" class="subdued"></span>
         </div>
+        <button id="open-changes" class="icon-btn" aria-label="Changes">±</button>
+        <button id="open-handover" class="icon-btn" aria-label="Fork or hand over">⑂</button>
         <button id="ack" class="icon-btn" aria-label="Acknowledge" hidden>✓</button>
         <button id="stop" class="icon-btn danger" aria-label="Stop session">■</button>
       </header>
@@ -293,6 +295,34 @@
       </div>
     </section>
 
+    <!-- Changes: what the session altered, uncommitted and against the base branch -->
+    <section id="changes-view" hidden>
+      <header class="topbar">
+        <button id="changes-back" class="icon-btn" aria-label="Back">‹</button>
+        <div class="detail-title">
+          <span id="changes-title">Changes</span>
+          <span id="changes-sub" class="subdued"></span>
+        </div>
+        <button id="changes-refresh" class="icon-btn" aria-label="Refresh">↻</button>
+      </header>
+      <div id="changes-pr" class="pr-card" hidden></div>
+      <div id="changes-body" class="changes"></div>
+      <footer class="foot subdued" id="changes-foot"></footer>
+    </section>
+
+    <!-- One file's diff -->
+    <section id="diff-view" hidden>
+      <header class="topbar">
+        <button id="diff-back" class="icon-btn" aria-label="Back">‹</button>
+        <div class="detail-title">
+          <span id="diff-title">Diff</span>
+          <span id="diff-sub" class="subdued"></span>
+        </div>
+      </header>
+      <div id="diff-body" class="diffbody"></div>
+      <footer class="foot subdued" id="diff-foot"></footer>
+    </section>
+
     <!-- Diagnostics -->
     <section id="diag-view" hidden>
       <header class="topbar">
@@ -309,6 +339,32 @@
       </nav>
       <div id="diag-log" class="diaglog"></div>
       <footer class="foot subdued" id="diag-foot"></footer>
+    </section>
+
+    <!-- Fork, or hand the conversation to another agent -->
+    <section id="handover-sheet" class="sheet" hidden>
+      <div class="sheet-card">
+        <header class="sheet-head">
+          <strong>Fork or hand over</strong>
+          <button id="handover-close" class="icon-btn" aria-label="Close">×</button>
+        </header>
+
+        <h3 class="sheet-h">Fork this conversation</h3>
+        <p class="subdued setting-hint">
+          Keeps this session as it is and starts a copy from the same history. Use it when
+          an agent went down the wrong path.
+        </p>
+        <label for="fork-branch">New branch <span class="subdued">(optional, forks into its own worktree)</span></label>
+        <input id="fork-branch" type="text" autocapitalize="none" placeholder="leave empty to stay here" />
+        <button id="fork-go" class="btn btn-accent">Fork</button>
+
+        <h3 class="sheet-h">Hand to another agent</h3>
+        <p class="subdued setting-hint">Same conversation, different agent.</p>
+        <select id="swap-agent"></select>
+        <button id="swap-go" class="btn">Hand over</button>
+
+        <p id="handover-error" class="error" hidden></p>
+      </div>
     </section>
 
     <!-- New session sheet -->
