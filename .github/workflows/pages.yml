@@ -1,0 +1,44 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A second deploy while one is running would race; the later one wins.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the page is not obviously broken
+        run: |
+          set -euo pipefail
+          # A landing page whose title or description is missing is worse than none:
+          # that is exactly what a search result shows.
+          for needle in '<title>' 'name="description"' 'rel="canonical"' 'application/ld+json'; do
+            grep -q "$needle" site/index.html || { echo "site/index.html is missing $needle" >&2; exit 1; }
+          done
+          python3 -c "import xml.dom.minidom; xml.dom.minidom.parse('site/sitemap.xml')"
+          test -f site/icon.svg && test -f site/icon-512.png
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

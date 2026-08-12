@@ -118,6 +118,10 @@ func main() {
 	mux.Handle("/api/sessions/", authed(http.HandlerFunc(handleSession)))
 	mux.Handle("/api/permissions", authed(http.HandlerFunc(handlePermissions)))
 	mux.Handle("/api/permissions/", authed(http.HandlerFunc(handlePermissionRespond)))
+	// An Android TWA verifies the origin it wraps by fetching this file from it. Since
+	// this app *is* that origin, it serves the file, rather than requiring a separate
+	// web server in front just to publish 22 lines of JSON.
+	mux.HandleFunc("/.well-known/assetlinks.json", handleAssetLinks)
 	mux.Handle("/", static)
 
 	if err := loadPush(); err != nil {

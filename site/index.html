@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Remote For Xirp — see and steer your coding agents from your phone</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A mobile web app for the Xirp agent daemon. Watch and answer Claude Code, Codex and Gemini sessions running on your Mac from an iPhone or Android, on your own network. Free, MIT, one binary."
+    />
+    <link rel="canonical" href="https://abovecolin.github.io/remote-for-xirp/" />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Remote For Xirp" />
+    <meta
+      property="og:description"
+      content="See and steer your coding agents from your phone. A mobile web app for the Xirp agent daemon — Claude Code, Codex, Gemini — on your own network."
+    />
+    <meta property="og:url" content="https://abovecolin.github.io/remote-for-xirp/" />
+    <meta property="og:image" content="https://abovecolin.github.io/remote-for-xirp/icon-512.png" />
+    <meta name="twitter:card" content="summary" />
+
+    <!-- Structured data, so a search engine can tell what kind of thing this is rather
+         than inferring it from prose. Every field here is true. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Remote For Xirp",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "macOS (host), iOS and Android (browser)",
+        "url": "https://abovecolin.github.io/remote-for-xirp/",
+        "codeRepository": "https://github.com/AboveColin/remote-for-xirp",
+        "license": "https://opensource.org/licenses/MIT",
+        "isAccessibleForFree": true,
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      }
+    </script>
+
+    <style>
+      :root {
+        --bg: #0e1014;
+        --surface: #171b22;
+        --surface-hi: #1f242d;
+        --line: #262c36;
+        --text: #f2f5f9;
+        --text-dim: #9aa4b4;
+        --accent: #7c6cff;
+        --accent-hi: #9384ff;
+        --ok: #35c46a;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.6;
+      }
+      .wrap { max-width: 780px; margin: 0 auto; padding: 56px 22px 80px; }
+      header { text-align: center; margin-bottom: 40px; }
+      header img { filter: drop-shadow(0 8px 30px rgba(124, 108, 255, 0.35)); }
+      h1 { font-size: 40px; letter-spacing: -0.03em; margin: 18px 0 6px; }
+      .tagline { font-size: 19px; color: var(--text-dim); margin: 0 0 4px; }
+      .sub { color: var(--text-dim); max-width: 60ch; margin: 14px auto 0; }
+      h2 { font-size: 22px; letter-spacing: -0.02em; margin: 44px 0 10px; }
+      h3 { font-size: 15px; margin: 24px 0 4px; }
+      a { color: var(--accent-hi); }
+      code, pre {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+      }
+      pre {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px 16px;
+        overflow-x: auto;
+      }
+      p code { background: var(--surface-hi); border-radius: 4px; padding: 1px 6px; }
+      .cta { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 22px; }
+      .btn {
+        display: inline-block;
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 15px;
+        padding: 12px 20px;
+        border-radius: 500px;
+        border: 1px solid var(--line);
+        color: var(--text);
+        background: var(--surface-hi);
+      }
+      .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+      .card {
+        background: linear-gradient(180deg, var(--surface-hi), var(--surface));
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 16px;
+      }
+      .card h3 { margin: 0 0 4px; font-size: 15px; }
+      .card p { margin: 0; color: var(--text-dim); font-size: 14px; }
+      ul { color: var(--text-dim); }
+      li { margin: 6px 0; }
+      footer {
+        margin-top: 56px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+        color: var(--text-dim);
+        font-size: 13px;
+        text-align: center;
+      }
+      .note {
+        border-left: 3px solid var(--accent);
+        background: var(--surface);
+        padding: 12px 16px;
+        border-radius: 0 10px 10px 0;
+        color: var(--text-dim);
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <img src="./icon.svg" alt="" width="88" height="88" />
+        <h1>Remote For Xirp</h1>
+        <p class="tagline">See and steer your coding agents from your phone.</p>
+        <p class="sub">
+          A mobile web app for the <a href="https://xirp.dev">Xirp</a> desktop app's agent
+          daemon. The sessions running on your Mac — Claude Code, Codex, Gemini, or whatever
+          else Xirp is driving — can be watched and answered from an iPhone or Android
+          without going back to the desk. It runs on your own network, not through anyone's
+          cloud.
+        </p>
+        <div class="cta">
+          <a class="btn primary" href="https://github.com/AboveColin/remote-for-xirp">View on GitHub</a>
+          <a class="btn" href="https://github.com/AboveColin/remote-for-xirp/releases/latest">Download the latest release</a>
+        </div>
+      </header>
+
+      <h2>Install</h2>
+      <pre><code>curl -fsSL https://raw.githubusercontent.com/AboveColin/remote-for-xirp/main/install.sh | sh</code></pre>
+      <p>
+        That drops a universal binary into <code>~/.local/bin</code> and stops. Nothing starts
+        listening because you piped a script into a shell — starting it is one explicit
+        command, which prints a QR code to scan with your phone:
+      </p>
+      <pre><code>xirp-remote interfaces              # which address can a phone reach?
+xirp-remote install --generate-key # start it, and print a QR code</code></pre>
+
+      <h2>What it does</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Machines, then projects, then sessions</h3>
+          <p>Several machines running Xirp, each with its projects and their sessions.</p>
+        </div>
+        <div class="card">
+          <h3>Chat, transcript, or the real tmux pane</h3>
+          <p>
+            The pane is the actual one, so slash commands, model pickers and permission
+            prompts work without this app knowing they exist.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Review the diff</h3>
+          <p>
+            What a session changed, uncommitted and against its base branch, with the file
+            diff and a link to the branch's pull request.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Notifications</h3>
+          <p>
+            Web Push when an agent finishes, fails, or wants an answer — with the app closed.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Start, fork, hand over</h3>
+          <p>
+            Start a session with a project, agent and model. Fork one that went the wrong
+            way, or hand it to a different agent.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Pair by QR</h3>
+          <p>
+            The access key travels in the URL fragment, so it never reaches a server log, and
+            the page clears it from the address bar.
+          </p>
+        </div>
+      </div>
+
+      <h2>What you need</h2>
+      <ul>
+        <li><strong>macOS</strong>, and not incidentally — the daemon's token exists only in the Xirp app's process environment, which only the same user can read.</li>
+        <li><strong>Xirp</strong> installed and running. When the app is quit there is nothing to control.</li>
+        <li>A phone on the same network, or reaching the Mac over a VPN.</li>
+        <li>Nothing else. One Go binary, no Node, no database.</li>
+      </ul>
+
+      <h2>What it deliberately will not do</h2>
+      <p class="note">
+        It reaches 33 of the daemon's 212 message types. No git writes, no terminal attach, no
+        session deletion, no settings changes. Remote approval of permission prompts is absent
+        because the daemon holds a request open for about half a second before falling through
+        to the agent's own dialog — no polling client can catch that, and pretending otherwise
+        would be worse than leaving it out.
+      </p>
+
+      <footer>
+        MIT licensed · unofficial, not affiliated with Xirp ·
+        <a href="https://github.com/AboveColin/remote-for-xirp">source</a>
+      </footer>
+    </div>
+  </body>
+</html>

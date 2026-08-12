@@ -69,7 +69,9 @@ node_modules, no database.
   carries the key in the URL *fragment*, so it never reaches a server log, and the page
   strips it from the address bar as soon as it has a cookie.
 - **Installable PWA** with a service worker, so it lives on the home screen and opens
-  full-screen. See `deploy/android/` to wrap it as an APK.
+  full-screen. An Android APK can be built for your own origin — see
+  [`deploy/android/`](deploy/android/), which also explains why one cannot be published
+  for everyone.
 - **Restores sessions after Xirp restarts** — the decision to revive or dismiss them no
   longer needs the desk.
 - **Renames a session**, by hand or by asking the agent to retitle it from the
@@ -286,6 +288,11 @@ the Mac as the user running Xirp. So what actually contains it is:
 - Setting `XIRP_REMOTE_KEY` re-enables the login gate at any time; the key path is
   still there, compared in constant time, wrong keys delayed 400 ms, held in an
   `HttpOnly` `SameSite=Lax` cookie. Use `xirp-remote install --key <key>`.
+
+## A landing page
+
+[abovecolin.github.io/remote-for-xirp](https://abovecolin.github.io/remote-for-xirp/) —
+built from `site/` by the `pages` workflow.
 
 ## Putting it behind a reverse proxy
 

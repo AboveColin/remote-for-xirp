@@ -2,6 +2,8 @@ package main
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -210,4 +212,24 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, map[string]any{"records": out, "minLevel": minLevel})
+}
+
+// handleAssetLinks publishes the Digital Asset Links file for an Android wrapper, if one
+// has been put in place. It is intentionally unauthenticated: the verification happens
+// before any user is involved, so requiring a key would guarantee it fails.
+//
+// Nothing is generated here. The file contains a signing-certificate fingerprint, which
+// only whoever holds the keystore can produce.
+func handleAssetLinks(w http.ResponseWriter, r *http.Request) {
+	home, _ := os.UserHomeDir()
+	path := filepath.Join(home, "Library", "Application Support", "xirp-remote", "assetlinks.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		// A plain 404 is the right answer: no wrapper has been set up.
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write(data)
 }
