@@ -69,6 +69,7 @@
         <div class="brand"><span class="brand-dot"></span>Machines</div>
         <button id="machines-settings" class="icon-btn" aria-label="Settings">⚙</button>
       </header>
+      <div id="restore-banner" class="approvals" hidden></div>
       <div id="machine-stats" class="stats"></div>
       <div id="machines" class="machines"></div>
       <button id="add-machine" class="add-machine">
@@ -326,6 +327,7 @@
     <section id="diff-view" hidden>
       <header class="topbar">
         <button id="diff-back" class="icon-btn" aria-label="Back">‹</button>
+        <button id="diff-whole" class="icon-btn" aria-label="View the whole file">⤢</button>
         <div class="detail-title">
           <span id="diff-title">Diff</span>
           <span id="diff-sub" class="subdued"></span>
@@ -357,9 +359,17 @@
     <section id="handover-sheet" class="sheet" hidden>
       <div class="sheet-card">
         <header class="sheet-head">
-          <strong>Fork or hand over</strong>
+          <strong>Session actions</strong>
           <button id="handover-close" class="icon-btn" aria-label="Close">×</button>
         </header>
+
+        <h3 class="sheet-h">Rename</h3>
+        <p class="subdued setting-hint">Or ask the agent to retitle it from the conversation.</p>
+        <input id="rename-name" type="text" placeholder="new name" />
+        <div class="row-2">
+          <button id="rename-go" class="btn">Rename</button>
+          <button id="retitle-go" class="btn">Auto-title</button>
+        </div>
 
         <h3 class="sheet-h">Fork this conversation</h3>
         <p class="subdued setting-hint">

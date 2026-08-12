@@ -107,6 +107,8 @@ func main() {
 	mux.Handle("/api/models", authed(http.HandlerFunc(handleModels)))
 	mux.Handle("/api/pair", authed(http.HandlerFunc(handlePair)))
 	mux.Handle("/api/diagnostics", authed(http.HandlerFunc(handleDiagnostics)))
+	mux.Handle("/api/restorable", authed(http.HandlerFunc(handleRestorable)))
+	mux.Handle("/api/restore", authed(http.HandlerFunc(handleRestore)))
 	mux.Handle("/api/push/key", authed(http.HandlerFunc(handlePushKey)))
 	mux.Handle("/api/push/subscribe", authed(http.HandlerFunc(handlePushSubscribe)))
 	mux.Handle("/api/push/unsubscribe", authed(http.HandlerFunc(handlePushUnsubscribe)))
@@ -331,6 +333,10 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 		sessionFork(w, r, id)
 	case "swap":
 		sessionSwapAgent(w, r, id)
+	case "rename":
+		sessionRename(w, r, id)
+	case "file":
+		sessionFile(w, r, id)
 	default:
 		writeJSON(w, 404, map[string]any{"error": "unknown action " + action})
 	}

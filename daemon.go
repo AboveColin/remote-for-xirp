@@ -285,8 +285,16 @@ func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Du
 		return true
 	}
 
+	// Idle is measured from the last frame we care about, not the last frame that
+	// arrived. The daemon broadcasts unrelated traffic to connected clients — its
+	// database debug feed emits a frame per query — and treating that as activity would
+	// keep this loop alive until the overall deadline on every call.
+	lastWanted := time.Now()
 	for time.Now().Before(deadline) {
-		readBy := time.Now().Add(idleGap)
+		readBy := lastWanted.Add(idleGap)
+		if readBy.Before(time.Now()) {
+			readBy = time.Now().Add(50 * time.Millisecond)
+		}
 		if readBy.After(deadline) {
 			readBy = deadline
 		}
@@ -322,6 +330,7 @@ func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Du
 			continue
 		}
 		frames = append(frames, msg)
+		lastWanted = time.Now()
 		source, _ := msg["source"].(string)
 		seen[source] = true
 		if d, _ := msg["done"].(bool); d {

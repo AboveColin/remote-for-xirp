@@ -1642,3 +1642,11 @@ textarea:focus {
   width: 100%;
   margin-top: 10px;
 }
+
+.row-2 {
+  display: flex;
+  gap: 8px;
+}
+.row-2 .btn {
+  flex: 1;
+}

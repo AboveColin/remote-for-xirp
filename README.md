@@ -68,6 +68,11 @@ node_modules, no database.
   strips it from the address bar as soon as it has a cookie.
 - **Installable PWA** with a service worker, so it lives on the home screen and opens
   full-screen. See `deploy/android/` to wrap it as an APK.
+- **Restores sessions after Xirp restarts** — the decision to revive or dismiss them no
+  longer needs the desk.
+- **Renames a session**, by hand or by asking the agent to retitle it from the
+  conversation.
+- **Reads a whole file** from the session's checkout, from inside a diff.
 - **Notifies you when an agent finishes**, fails, or wants an answer — Web Push, so it
   arrives with the app closed. The server watches session status and pushes; the service
   worker shows it; tapping opens that session.
@@ -268,7 +273,7 @@ the Mac as the user running Xirp. So what actually contains it is:
 - Cross-origin access is enabled **only when a key is required**. On an open instance,
   echoing an origin would let any web page you happen to visit read and drive your
   sessions.
-- Only an explicit allowlist of daemon messages is reachable — 28 of the daemon's
+- Only an explicit allowlist of daemon messages is reachable — 33 of the daemon's
   212 message types. It can list, read, search, message, stop and create sessions,
   and read git status. It cannot commit, push, open a PR, attach to a terminal,
   delete a session or change any app setting: `git:` writes, `terminal:`,
@@ -333,6 +338,10 @@ cookie from `POST /api/auth`. In open mode no credential is needed.
 | POST | `/api/push/subscribe` | Store a browser subscription. |
 | POST | `/api/push/unsubscribe` | Forget one, or all. |
 | POST | `/api/push/test` | Send a notification now, to prove the chain. |
+| GET | `/api/restorable` | Sessions left needing a restore-or-dismiss decision. |
+| POST | `/api/restore` | `{restore: [], dismiss: []}`. |
+| POST | `/api/sessions/{id}/rename` | `{name}` or `{regenerate: true}`. |
+| GET | `/api/sessions/{id}/file?path=` | One file from the session's checkout. |
 
 ### Four traps in the daemon's API worth knowing
 

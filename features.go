@@ -481,3 +481,170 @@ func sessionSwapAgent(w http.ResponseWriter, r *http.Request, id string) {
 	sm, _ := res["session"].(map[string]any)
 	writeJSON(w, 200, map[string]any{"ok": true, "agent": body.Agent, "session": project(sm, sessionFields)})
 }
+
+// ---- restoring sessions after the app restarts ----
+//
+// When Xirp restarts, sessions it was running are left needing a decision: bring them
+// back, or dismiss them. Until now that decision could only be made at the desk, which
+// is exactly the wrong place if you are away and an agent has stopped.
+
+func handleRestorable(w http.ResponseWriter, r *http.Request) {
+	res, err := client.Call(map[string]any{"type": "sessions:restorable"}, "sessions:restorable", 20*time.Second)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	raw, _ := res["sessions"].([]any)
+	names := projectNames()
+	out := make([]map[string]any, 0, len(raw))
+	for _, s := range raw {
+		if sm, ok := s.(map[string]any); ok {
+			e := project(sm, sessionFields)
+			if pid, _ := sm["projectId"].(string); pid != "" {
+				e["projectName"] = names[pid]
+			}
+			out = append(out, e)
+		}
+	}
+	writeJSON(w, 200, map[string]any{"sessions": out})
+}
+
+// handleRestore revives or dismisses sessions. The daemon reports progress and then a
+// completion frame, so this collects until the completion arrives.
+func handleRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]any{"error": "POST only"})
+		return
+	}
+	var body struct {
+		Restore []string `json:"restore"`
+		Dismiss []string `json:"dismiss"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 32*1024)).Decode(&body); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad body"})
+		return
+	}
+	if len(body.Restore) == 0 && len(body.Dismiss) == 0 {
+		writeJSON(w, 400, map[string]any{"error": "nothing to restore or dismiss"})
+		return
+	}
+	// Both lists are required by the daemon, even when empty.
+	if body.Restore == nil {
+		body.Restore = []string{}
+	}
+	if body.Dismiss == nil {
+		body.Dismiss = []string{}
+	}
+
+	// Restoring starts agents, which takes as long as it takes; the completion frame is
+	// what says it finished.
+	res, err := client.Call(map[string]any{
+		"type": "sessions:restore-bulk", "sessionIds": body.Restore, "dismissIds": body.Dismiss,
+	}, "sessions:restore-complete", 120*time.Second)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	log.Printf("restored %d session(s), dismissed %d", len(body.Restore), len(body.Dismiss))
+	writeJSON(w, 200, map[string]any{
+		"ok":        true,
+		"restored":  len(body.Restore),
+		"dismissed": len(body.Dismiss),
+		"result":    project(res, []string{"restored", "dismissed", "failed", "errors"}),
+	})
+}
+
+// ---- renaming ----
+
+// sessionRename sets a session's display name, or asks the agent to generate one. A
+// session called "Session" among twenty others is the sort of thing that only annoys
+// you when you are away from the machine that could fix it.
+func sessionRename(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]any{"error": "POST only"})
+		return
+	}
+	var body struct {
+		Name       string `json:"name"`
+		Regenerate bool   `json:"regenerate"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body)
+
+	if body.Regenerate {
+		// The daemon answers title-generating first and updated when the new title
+		// lands; the second is the one worth waiting for.
+		res, err := client.Call(map[string]any{
+			"type": "session:regenerate-title", "sessionId": id,
+		}, "session:updated", 60*time.Second)
+		if err != nil {
+			writeJSON(w, 502, map[string]any{"error": err.Error()})
+			return
+		}
+		sm, _ := res["session"].(map[string]any)
+		writeJSON(w, 200, map[string]any{"ok": true, "session": project(sm, sessionFields)})
+		return
+	}
+
+	if strings.TrimSpace(body.Name) == "" {
+		writeJSON(w, 400, map[string]any{"error": "name required"})
+		return
+	}
+	res, err := client.Call(map[string]any{
+		"type": "session:update", "sessionId": id, "name": body.Name,
+	}, "session:updated", 20*time.Second)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	sm, _ := res["session"].(map[string]any)
+	log.Printf("renamed session %s", id)
+	writeJSON(w, 200, map[string]any{"ok": true, "session": project(sm, sessionFields)})
+}
+
+// ---- reading a file ----
+
+// fileMaxBytes bounds a file read. Measured: this project's own CLAUDE.md is 23.6 KB,
+// which is a big markdown file by any standard, so 200 KB carries anything worth reading
+// on a phone and refuses a bundle or a binary.
+const fileMaxBytes = 200000
+
+// sessionFile reads one file from the session's checkout, so a file an agent mentioned
+// can be read without a laptop.
+func sessionFile(w http.ResponseWriter, r *http.Request, id string) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		writeJSON(w, 400, map[string]any{"error": "missing path"})
+		return
+	}
+	projectID, worktree, _, err := sessionProject(id)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	if projectID == "" {
+		writeJSON(w, 404, map[string]any{"error": "session has no project"})
+		return
+	}
+	req := map[string]any{"type": "files:read", "projectId": projectID, "path": path}
+	if worktree != "" {
+		req["worktreePath"] = worktree
+	}
+	res, err := client.Call(req, "files:read", 25*time.Second)
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"unavailable": err.Error()})
+		return
+	}
+	content, _ := res["content"].(string)
+	truncated := false
+	if len(content) > fileMaxBytes {
+		content = content[:fileMaxBytes]
+		truncated = true
+	}
+	writeJSON(w, 200, map[string]any{
+		"path":      path,
+		"content":   content,
+		"size":      res["size"],
+		"mtime":     res["mtime"],
+		"truncated": truncated,
+	})
+}

@@ -108,6 +108,7 @@ let state = {
   query: '',
   project: null,
   modules: null,
+  diffPath: null,
 };
 
 // ---- plumbing ----
@@ -362,6 +363,61 @@ el('sessions-back').addEventListener('click', () => {
 });
 el('projects-new').addEventListener('click', openCreateSheet);
 
+// ---- sessions waiting to be restored ----
+//
+// After Xirp restarts, the sessions it was running need a decision: bring them back or
+// let them go. That decision used to require the desk.
+
+async function refreshRestorable() {
+  const box = el('restore-banner');
+  try {
+    const { sessions } = await api('/api/restorable');
+    if (!sessions || !sessions.length) {
+      box.hidden = true;
+      return;
+    }
+    box.innerHTML = '';
+    const h = document.createElement('h2');
+    h.textContent = `${sessions.length} session${sessions.length === 1 ? '' : 's'} can be restored`;
+    box.append(h);
+    for (const s of sessions.slice(0, 6)) {
+      const line = document.createElement('div');
+      line.className = 'machine-sub subdued';
+      line.style.paddingLeft = '0';
+      line.textContent = `${s.name || s.id.slice(0, 8)} · ${s.projectName || ''}`;
+      box.append(line);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'approval-actions';
+    const ids = sessions.map((s) => s.id);
+    for (const [label, body, cls] of [
+      ['Restore all', { restore: ids }, 'btn btn-accent'],
+      ['Dismiss all', { dismiss: ids }, 'btn btn-deny'],
+    ]) {
+      const b = document.createElement('button');
+      b.className = cls;
+      b.textContent = label;
+      b.onclick = async () => {
+        b.disabled = true;
+        b.textContent = `${label}…`;
+        try {
+          const r = await api('/api/restore', { method: 'POST', body: JSON.stringify(body) });
+          toast(`Restored ${r.restored}, dismissed ${r.dismissed}`);
+        } catch (e) {
+          toast(e.message);
+        }
+        refreshRestorable();
+        renderMachines();
+      };
+      actions.append(b);
+    }
+    box.append(actions);
+    box.hidden = false;
+  } catch {
+    box.hidden = true;
+  }
+}
+
 // ---- notifications ----
 //
 // Three parties have to agree: the browser grants permission, the push service issues a
@@ -549,7 +605,8 @@ async function handover(path, body, label, btn) {
       toast('Forked');
       openSession(res.session.id);
     } else {
-      toast(`Handed to ${res.agent}`);
+      if (res.session && res.session.name) el('detail-name').textContent = res.session.name;
+      toast(res.agent ? `Handed to ${res.agent}` : 'Updated');
       refreshDetail();
     }
   } catch (e) {
@@ -566,6 +623,14 @@ el('handover-close').addEventListener('click', closeHandover);
 el('handover-sheet').addEventListener('click', (e) => {
   if (e.target === el('handover-sheet')) closeHandover();
 });
+el('rename-go').addEventListener('click', (e) =>
+  handover('rename', { name: el('rename-name').value.trim() }, 'Renaming', e.target)
+);
+el('retitle-go').addEventListener('click', (e) =>
+  // The agent writes the title from the conversation, which is usually better than
+  // anything typed with a thumb.
+  handover('rename', { regenerate: true }, 'Retitling', e.target)
+);
 el('fork-go').addEventListener('click', (e) =>
   handover('fork', { newBranch: el('fork-branch').value.trim() }, 'Forking', e.target)
 );
@@ -694,6 +759,7 @@ function renderDiff(text) {
 
 async function openDiff(sessionId, path, mode) {
   show('diff');
+  state.diffPath = path;
   el('diff-title').textContent = path.split('/').pop();
   el('diff-sub').textContent = mode === 'branch' ? 'vs base branch' : 'not committed';
   const body = el('diff-body');
@@ -726,6 +792,36 @@ el('open-changes').addEventListener('click', () => {
 el('changes-refresh').addEventListener('click', refreshChanges);
 el('changes-back').addEventListener('click', () => show('detail'));
 el('diff-back').addEventListener('click', () => show('changes'));
+
+// The diff shows what changed; sometimes the question is what the file now says.
+el('diff-whole').addEventListener('click', async () => {
+  const path = state.diffPath;
+  if (!path || !state.sessionId) return;
+  el('diff-sub').textContent = 'whole file';
+  const body = el('diff-body');
+  body.innerHTML = '';
+  el('diff-foot').textContent = 'Loading…';
+  try {
+    const d = await api(
+      `/api/sessions/${encodeURIComponent(state.sessionId)}/file?path=${encodeURIComponent(path)}`
+    );
+    if (d.unavailable) {
+      el('diff-foot').textContent = d.unavailable;
+      return;
+    }
+    // Rendered as plain lines, not as a diff: nothing here is an addition or a removal.
+    for (const line of (d.content || '').split('\n')) {
+      const div = document.createElement('div');
+      div.className = 'diffline';
+      div.textContent = line || ' ';
+      body.append(div);
+    }
+    el('diff-foot').textContent =
+      `${(d.content || '').split('\n').length} lines${d.truncated ? ' · truncated' : ''}`;
+  } catch (e) {
+    el('diff-foot').textContent = e.message;
+  }
+});
 
 // ---- diagnostics ----
 //
@@ -958,6 +1054,7 @@ async function renderMachines() {
       stat.lastChild.textContent = values[i][1];
     });
     el('machines-foot').textContent = 'Remote For Xirp';
+    refreshRestorable();
   } finally {
     machineRenderBusy = false;
   }
