@@ -1,9 +1,11 @@
 # Remote For Xirp
 
-A mobile web control surface for the [Xirp](https://xirp.dev) desktop app's agent
-daemon. Runs on the Mac that runs Xirp, exposes a phone-sized UI on your own
-network, and lets you read what your sessions are doing and send them messages
-without being at the desk.
+See and steer your coding agents from your phone.
+
+A mobile web app for the [Xirp](https://xirp.dev) desktop app's agent daemon, so the
+sessions running on your Mac — Claude Code, Codex, Gemini, or whatever else Xirp is
+driving — can be watched and answered from an iPhone or Android without going back to
+the desk. It runs on your own network, not through anyone's cloud.
 
 Single Go binary with the UI embedded. No build step for the frontend, no
 node_modules, no database.

@@ -8,7 +8,7 @@
  * the class of bug this app exists to avoid.
  */
 
-const SHELL = 'xirp-shell-v5';
+const SHELL = 'xirp-shell-v6';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -21,6 +21,7 @@ const SHELL_FILES = [
   './icon-192.png',
   './icon-512.png',
   './manifest.json',
+  './robots.txt',
 ];
 
 self.addEventListener('install', (event) => {
