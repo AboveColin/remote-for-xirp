@@ -1,4 +1,4 @@
-module xirp-remote
+module github.com/AboveColin/remote-for-xirp
 
 go 1.26
 

@@ -128,13 +128,26 @@ async function api(path, options = {}) {
   return body;
 }
 
+// Polling is per-view, and it stops when the page is not being looked at.
+//
+// Every poll is work on the other end: the daemon's own database panel shows the
+// sessions table taking the overwhelming majority of its queries, and an app left open
+// in a background tab was contributing to that around the clock while showing nobody
+// anything. It also costs phone battery for the same nothing.
+function startPolling() {
+  if (state.timer) clearInterval(state.timer);
+  state.timer = null;
+  if (document.hidden) return;
+  const view = state.view;
+  if (view === 'projects' || view === 'list') state.timer = setInterval(refreshList, LIST_POLL_MS);
+  else if (view === 'detail') state.timer = setInterval(refreshDetail, DETAIL_POLL_MS);
+  else if (view === 'machines') state.timer = setInterval(renderMachines, 15000);
+}
+
 function show(view) {
   state.view = view;
   for (const [name, node] of Object.entries(views)) node.hidden = name !== view;
-  if (state.timer) clearInterval(state.timer);
-  if (view === 'projects' || view === 'list') state.timer = setInterval(refreshList, LIST_POLL_MS);
-  if (view === 'detail') state.timer = setInterval(refreshDetail, DETAIL_POLL_MS);
-  if (view === 'machines') state.timer = setInterval(renderMachines, 15000);
+  startPolling();
   if (view !== 'scan') stopScan();
 }
 
@@ -1366,7 +1379,7 @@ function setTerminalMode(on) {
   el('detail-urls').hidden = on || el('detail-urls').hidden;
   if (paneTimer) clearInterval(paneTimer);
   paneTimer = null;
-  if (on) {
+  if (on && !document.hidden) {
     refreshPane();
     paneTimer = setInterval(refreshPane, PANE_POLL_MS);
   }
@@ -1626,9 +1639,21 @@ async function boot() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') return;
-  if (state.view === 'list') refreshList();
-  if (state.view === 'detail') refreshDetail();
+  if (document.hidden) {
+    // Backgrounded: stop asking. Whatever changed will be fetched on return.
+    startPolling();
+    if (paneTimer) clearInterval(paneTimer);
+    paneTimer = null;
+    return;
+  }
+  // Back in front: catch up once immediately, then resume the interval.
+  if (state.view === 'machines') renderMachines();
+  if (state.view === 'projects' || state.view === 'list') refreshList();
+  if (state.view === 'detail') {
+    refreshDetail();
+    if (settings.mode === 'terminal') setTerminalMode(true);
+  }
+  startPolling();
 });
 
 if ('serviceWorker' in navigator) {

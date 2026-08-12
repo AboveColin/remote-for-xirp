@@ -85,10 +85,19 @@ node_modules, no database.
 ## Running it as a service
 
 ```sh
-go build -o xirp-remote .
-./xirp-remote install          # installs a launchd user agent and starts it
-./xirp-remote status
+go install github.com/AboveColin/remote-for-xirp@latest   # installs the binary as xirp-remote
+xirp-remote install                                       # installs a launchd user agent and starts it
+xirp-remote status
 ```
+
+Or from a clone:
+
+```sh
+go build -o xirp-remote .
+./xirp-remote install
+```
+
+The command is `xirp-remote`; the repository is `remote-for-xirp`.
 
 | Command | Does |
 |---|---|
