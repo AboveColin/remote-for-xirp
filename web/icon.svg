@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Remote for Xirp">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Remote For Xirp">
   <rect width="64" height="64" rx="14" fill="#0e1014" />
   <!-- A signal reaching a session: three arcs radiating from a filled dot. -->
   <circle cx="32" cy="44" r="6" fill="#7c6cff" />

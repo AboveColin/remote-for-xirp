@@ -1,4 +1,4 @@
-/* Remote for Xirp — mobile control surface for the Xirp daemon.
+/* Remote For Xirp — mobile control surface for the Xirp daemon.
  *
  * Deliberately dependency-free and build-free: the whole UI is three files the
  * Go binary embeds, so deploying is copying one binary.
@@ -461,7 +461,7 @@ async function renderMachines() {
       stat.firstChild.textContent = values[i][0];
       stat.lastChild.textContent = values[i][1];
     });
-    el('machines-foot').textContent = 'Remote for Xirp';
+    el('machines-foot').textContent = 'Remote For Xirp';
   } finally {
     machineRenderBusy = false;
   }

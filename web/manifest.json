@@ -1,5 +1,5 @@
 {
-  "name": "Remote for Xirp",
+  "name": "Remote For Xirp",
   "short_name": "Xirp",
   "description": "Mobile remote control for the Xirp agent daemon (unofficial)",
   "start_url": "./",

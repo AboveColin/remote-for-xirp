@@ -1,4 +1,4 @@
-# Remote for Xirp
+# Remote For Xirp
 
 A mobile web control surface for the [Xirp](https://xirp.dev) desktop app's agent
 daemon. Runs on the Mac that runs Xirp, exposes a phone-sized UI on your own
