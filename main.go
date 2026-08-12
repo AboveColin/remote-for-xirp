@@ -107,12 +107,23 @@ func main() {
 	mux.Handle("/api/models", authed(http.HandlerFunc(handleModels)))
 	mux.Handle("/api/pair", authed(http.HandlerFunc(handlePair)))
 	mux.Handle("/api/diagnostics", authed(http.HandlerFunc(handleDiagnostics)))
+	mux.Handle("/api/push/key", authed(http.HandlerFunc(handlePushKey)))
+	mux.Handle("/api/push/subscribe", authed(http.HandlerFunc(handlePushSubscribe)))
+	mux.Handle("/api/push/unsubscribe", authed(http.HandlerFunc(handlePushUnsubscribe)))
+	mux.Handle("/api/push/test", authed(http.HandlerFunc(handlePushTest)))
 	mux.Handle("/api/logs", authed(http.HandlerFunc(handleLogs)))
 	mux.Handle("/api/sessions", authed(http.HandlerFunc(handleSessions)))
 	mux.Handle("/api/sessions/", authed(http.HandlerFunc(handleSession)))
 	mux.Handle("/api/permissions", authed(http.HandlerFunc(handlePermissions)))
 	mux.Handle("/api/permissions/", authed(http.HandlerFunc(handlePermissionRespond)))
 	mux.Handle("/", static)
+
+	if err := loadPush(); err != nil {
+		log.Printf("could not read push subscriptions: %v", err)
+	}
+	// The watcher only talks to the daemon when something is subscribed, so this is
+	// free until notifications are switched on.
+	startPushWatcher()
 
 	log.Printf("xirp-remote %s listening on %s", version, addr)
 	srv := &http.Server{

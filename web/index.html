@@ -274,6 +274,18 @@
           <button type="submit" class="btn">Add host</button>
         </form>
 
+        <h2>Notifications</h2>
+        <p class="subdued setting-hint">
+          Buzz this device when an agent finishes, fails, or wants an answer — including
+          when the app is closed. Needs the app installed to the home screen on iOS.
+        </p>
+        <div class="segmented" id="set-push">
+          <button data-value="off">Off</button>
+          <button data-value="on">On</button>
+        </div>
+        <button id="push-test" class="btn">Send a test notification</button>
+        <p id="push-status" class="subdued setting-hint"></p>
+
         <h2>Diagnostics</h2>
         <p class="subdued setting-hint">
           Daemon health, database load, tmux panes and the daemon's own log.

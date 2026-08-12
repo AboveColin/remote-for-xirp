@@ -250,6 +250,7 @@ el('machines-settings').addEventListener('click', () => {
   paintSettings();
   renderHosts();
   refreshPairing();
+  paintPush();
   show('settings');
 });
 el('scan-close').addEventListener('click', () => {
@@ -360,6 +361,146 @@ el('sessions-back').addEventListener('click', () => {
   renderFolders();
 });
 el('projects-new').addEventListener('click', openCreateSheet);
+
+// ---- notifications ----
+//
+// Three parties have to agree: the browser grants permission, the push service issues a
+// subscription, and this server keeps it and signs the messages. Each step can fail on
+// its own, so each one says which failed rather than reporting a generic "off".
+
+function urlBase64ToUint8Array(base64) {
+  // The VAPID key travels as base64url; the browser wants raw bytes.
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+  const raw = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+function pushSay(msg) {
+  el('push-status').textContent = msg;
+}
+
+async function pushState() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
+  const reg = await navigator.serviceWorker.getRegistration();
+  if (!reg) return 'off';
+  const sub = await reg.pushManager.getSubscription();
+  return sub ? 'on' : 'off';
+}
+
+async function paintPush() {
+  const st = await pushState();
+  paintSegmented('set-push', st === 'on' ? 'on' : 'off');
+  if (st === 'unsupported') {
+    pushSay('This browser cannot receive push notifications.');
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    pushSay('Notifications are blocked for this site in the browser settings.');
+    return;
+  }
+  try {
+    const { subscriptions } = await api('/api/push/key');
+    pushSay(
+      st === 'on'
+        ? `On for this device. ${subscriptions} device${subscriptions === 1 ? '' : 's'} subscribed.`
+        : `Off for this device. ${subscriptions} other device${subscriptions === 1 ? '' : 's'} subscribed.`
+    );
+  } catch {
+    pushSay(st === 'on' ? 'On for this device.' : 'Off for this device.');
+  }
+}
+
+async function pushEnable() {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      pushSay('This browser cannot receive push notifications.');
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      pushSay('Permission was not granted, so nothing can be delivered.');
+      paintSegmented('set-push', 'off');
+      return;
+    }
+    const reg = await navigator.serviceWorker.ready;
+    const { publicKey } = await api('/api/push/key');
+    if (!publicKey) {
+      pushSay('The server has no signing key.');
+      return;
+    }
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+    const raw = sub.toJSON();
+    await api('/api/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({
+        endpoint: raw.endpoint,
+        keys: raw.keys,
+        label: navigator.userAgent.includes('Android')
+          ? 'Android'
+          : /iPhone|iPad/.test(navigator.userAgent)
+            ? 'iOS'
+            : 'desktop',
+      }),
+    });
+    toast('Notifications on');
+    paintPush();
+  } catch (e) {
+    pushSay(`Could not subscribe: ${e.message}`);
+    paintSegmented('set-push', 'off');
+  }
+}
+
+async function pushDisable() {
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && (await reg.pushManager.getSubscription());
+    if (sub) {
+      // Tell the server first: unsubscribing locally would otherwise leave it pushing
+      // to an endpoint that no longer accepts anything.
+      await api('/api/push/unsubscribe', {
+        method: 'POST',
+        body: JSON.stringify({ endpoint: sub.endpoint }),
+      }).catch(() => {});
+      await sub.unsubscribe();
+    }
+    toast('Notifications off');
+    paintPush();
+  } catch (e) {
+    pushSay(e.message);
+  }
+}
+
+el('set-push').addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  if (btn.dataset.value === 'on') pushEnable();
+  else pushDisable();
+});
+
+el('push-test').addEventListener('click', async () => {
+  pushSay('Sending…');
+  try {
+    const r = await api('/api/push/test', { method: 'POST' });
+    pushSay(
+      r.sent
+        ? `Sent to ${r.sent} device${r.sent === 1 ? '' : 's'}.`
+        : `Nothing was sent. ${(r.errors || []).join('; ') || 'No device is subscribed.'}`
+    );
+  } catch (e) {
+    pushSay(e.message);
+  }
+});
+
+// A notification tap on an already-open app arrives as a message from the worker.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const id = event.data && event.data.openSession;
+    if (id) openSession(id);
+  });
+}
 
 // ---- fork, and handing a session to another agent ----
 
@@ -1969,6 +2110,22 @@ async function boot() {
   setLink(null);
   paintSendMode();
   await consumeDeepLink();
+
+  // Opened from a notification while the app was closed.
+  const wanted = new URLSearchParams(location.search).get('session');
+  if (wanted) {
+    history.replaceState(null, '', location.pathname);
+    try {
+      const body = await api('/api/sessions');
+      state.sessions = body.sessions || [];
+      setLink(true);
+      markSeen();
+      openSession(wanted);
+      return;
+    } catch {
+      // Fall through to the normal start-up path.
+    }
+  }
   // The markup hard-codes Active as the selected chip; if the saved default is All,
   // paint the chips to match before anything renders.
   for (const c of el('filters').children) {

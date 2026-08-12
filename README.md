@@ -68,6 +68,9 @@ node_modules, no database.
   strips it from the address bar as soon as it has a cookie.
 - **Installable PWA** with a service worker, so it lives on the home screen and opens
   full-screen. See `deploy/android/` to wrap it as an APK.
+- **Notifies you when an agent finishes**, fails, or wants an answer — Web Push, so it
+  arrives with the app closed. The server watches session status and pushes; the service
+  worker shows it; tapping opens that session.
 - **Reviews the diff**: which files a session changed, both uncommitted and against the
   base branch, with per-file additions and deletions, a rendered unified diff, and a link
   to the branch's pull request when the daemon knows of one.
@@ -232,6 +235,22 @@ XIRP_REMOTE_KEY=<32+ hex chars> ./xirp-remote    # foreground, key required
 `install` bakes both into the LaunchAgent's `EnvironmentVariables`, so the plist is
 the record of how the service is configured.
 
+### Notifications
+
+Turn them on per device in settings. Three parties have to agree — the browser grants
+permission, its push service issues a subscription, and this server keeps it and signs
+each message — so the setting reports which step failed rather than a generic "off".
+
+The VAPID keypair is generated on first use and kept in
+`~/Library/Application Support/xirp-remote/push.json`, mode `0600`. It must persist:
+a new keypair silently invalidates every existing subscription. Subscriptions that keep
+failing are dropped after five attempts, and a `404` or `410` removes one immediately —
+that is the push service saying the browser is gone.
+
+The watcher asks the daemon nothing while no device is subscribed, so this costs nothing
+until you switch it on. On iOS the app has to be installed to the home screen before the
+browser will issue a subscription at all.
+
 ## Security
 
 **As deployed it runs open, with no authentication** — that was a deliberate
@@ -310,6 +329,10 @@ cookie from `POST /api/auth`. In open mode no credential is needed.
 | GET | `/api/sessions/{id}/diff?path=&mode=` | One file's unified diff (`worktree` or `branch`). |
 | POST | `/api/sessions/{id}/fork` | `{newBranch?, forkIntoWorktree?, agent?}`. |
 | POST | `/api/sessions/{id}/swap` | `{agent, reason?}`. |
+| GET | `/api/push/key` | VAPID public key, generated on first use. |
+| POST | `/api/push/subscribe` | Store a browser subscription. |
+| POST | `/api/push/unsubscribe` | Forget one, or all. |
+| POST | `/api/push/test` | Send a notification now, to prove the chain. |
 
 ### Four traps in the daemon's API worth knowing
 
