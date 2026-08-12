@@ -1,3 +1,74 @@
+# This is the public project page. Everything on it is meant to be read, indexed and
+# quoted, by search engines and by model crawlers alike — so the default is Allow and
+# the named agents below exist only to say so explicitly, since several of them treat
+# the absence of a rule as a reason to stay away.
+#
+# The app itself is a different matter: it serves its own robots.txt with Disallow: /,
+# because it is a control panel on somebody's LAN and has no business in an index.
+
 User-agent: *
 Allow: /
+
+# Search
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+# Model training and retrieval
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+User-agent: meta-externalagent
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: cohere-ai
+Allow: /
+
 Sitemap: https://remote-for-xirp.cdevries.dev/sitemap.xml

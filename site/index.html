@@ -10,31 +10,152 @@
     />
     <link rel="canonical" href="https://remote-for-xirp.cdevries.dev/" />
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="apple-touch-icon" href="./icon-512.png" />
+    <meta name="author" content="AboveColin" />
+    <meta name="theme-color" content="#0e1014" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <!-- A plain-text summary for model crawlers, per llmstxt.org. -->
+    <link rel="alternate" type="text/plain" href="https://remote-for-xirp.cdevries.dev/llms.txt" title="llms.txt" />
 
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Remote For Xirp" />
+    <meta property="og:site_name" content="Remote For Xirp" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="Remote For Xirp — control your coding agents from your phone" />
     <meta
       property="og:description"
       content="See and steer your coding agents from your phone. A mobile web app for the Xirp agent daemon — Claude Code, Codex, Gemini — on your own network."
     />
     <meta property="og:url" content="https://remote-for-xirp.cdevries.dev/" />
-    <meta property="og:image" content="https://remote-for-xirp.cdevries.dev/icon-512.png" />
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:image" content="https://remote-for-xirp.cdevries.dev/og.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Remote For Xirp — see and steer your coding agents from your phone"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Remote For Xirp" />
+    <meta
+      name="twitter:description"
+      content="Watch and answer the Claude Code, Codex and Gemini sessions running on your Mac, from your phone, on your own network."
+    />
+    <meta name="twitter:image" content="https://remote-for-xirp.cdevries.dev/og.png" />
 
     <!-- Structured data, so a search engine can tell what kind of thing this is rather
          than inferring it from prose. Every field here is true. -->
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@type": "SoftwareApplication",
-        "name": "Remote For Xirp",
-        "applicationCategory": "DeveloperApplication",
-        "operatingSystem": "macOS (host), iOS and Android (browser)",
-        "url": "https://remote-for-xirp.cdevries.dev/",
-        "codeRepository": "https://github.com/AboveColin/remote-for-xirp",
-        "license": "https://opensource.org/licenses/MIT",
-        "isAccessibleForFree": true,
-        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+        "@graph": [
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://remote-for-xirp.cdevries.dev/#app",
+            "name": "Remote For Xirp",
+            "alternateName": "xirp-remote",
+            "applicationCategory": "DeveloperApplication",
+            "applicationSubCategory": "Remote control for coding agents",
+            "operatingSystem": "macOS (host), iOS and Android (browser)",
+            "url": "https://remote-for-xirp.cdevries.dev/",
+            "downloadUrl": "https://github.com/AboveColin/remote-for-xirp/releases/latest",
+            "installUrl": "https://github.com/AboveColin/remote-for-xirp#install",
+            "codeRepository": "https://github.com/AboveColin/remote-for-xirp",
+            "programmingLanguage": ["Go", "JavaScript"],
+            "softwareVersion": "0.3.1",
+            "datePublished": "2026-08-12",
+            "dateModified": "2026-08-12",
+            "license": "https://opensource.org/licenses/MIT",
+            "isAccessibleForFree": true,
+            "image": "https://remote-for-xirp.cdevries.dev/og.png",
+            "screenshot": [
+              "https://remote-for-xirp.cdevries.dev/screenshots/machines.png",
+              "https://remote-for-xirp.cdevries.dev/screenshots/projects.png",
+              "https://remote-for-xirp.cdevries.dev/screenshots/chat.png",
+              "https://remote-for-xirp.cdevries.dev/screenshots/changes.png",
+              "https://remote-for-xirp.cdevries.dev/screenshots/diff.png"
+            ],
+            "featureList": [
+              "Watch and answer running agent sessions from a phone",
+              "Chat view, full transcript, or the real tmux pane",
+              "Review uncommitted and branch diffs per file",
+              "Web Push when a session finishes, fails or needs an answer",
+              "Start, fork and hand over sessions",
+              "Pair by QR code over the local network"
+            ],
+            "author": { "@id": "https://remote-for-xirp.cdevries.dev/#author" },
+            "publisher": { "@id": "https://remote-for-xirp.cdevries.dev/#author" },
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+          },
+          {
+            "@type": "Person",
+            "@id": "https://remote-for-xirp.cdevries.dev/#author",
+            "name": "AboveColin",
+            "url": "https://github.com/AboveColin"
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://remote-for-xirp.cdevries.dev/#site",
+            "url": "https://remote-for-xirp.cdevries.dev/",
+            "name": "Remote For Xirp",
+            "inLanguage": "en",
+            "about": { "@id": "https://remote-for-xirp.cdevries.dev/#app" },
+            "publisher": { "@id": "https://remote-for-xirp.cdevries.dev/#author" }
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://remote-for-xirp.cdevries.dev/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Does it work on Windows or Linux?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. The host has to be macOS, because the Xirp daemon's access token exists only in the desktop app's process environment, which only the same user on the same machine can read."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does my session data go through a cloud service?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. The binary runs on your own Mac and serves the app over your own network. There is no account and no third-party relay. Web Push notifications are the one exception: their payloads are end-to-end encrypted per RFC 8291 before they reach the browser vendor's push service."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I approve permission prompts from my phone?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No, and it is left out on purpose. The daemon holds a permission request open for about half a second before falling through to the agent's own dialog, which is too short for any polling client to catch. Use the real tmux pane view, where the agent's own prompt appears and can be answered."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Do slash commands work?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, in the terminal view. It shows the session's actual tmux pane, so slash commands, model pickers and any other interactive prompt work without this app needing to know they exist."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does installing it start a server on my machine?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. The installer places a binary and stops. Starting the service is a separate explicit command, xirp-remote install, which also prints the QR code for pairing."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is this made by the Xirp developers?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. It is an unaffiliated project that talks to the daemon's local API, and it is MIT licensed."
+                }
+              }
+            ]
+          }
+        ]
       }
     </script>
 
@@ -111,6 +232,46 @@
         font-size: 13px;
         text-align: center;
       }
+      /* A row that scrolls sideways rather than a grid: these are phone screenshots, and
+         squeezing six of them into a column would make each one unreadable. */
+      .shots {
+        display: flex;
+        gap: 14px;
+        overflow-x: auto;
+        padding: 4px 2px 14px;
+        scroll-snap-type: x mandatory;
+      }
+      /* The views are different lengths, so the images are too. A fixed column height
+         with the caption pushed to the bottom keeps the captions on one line across the
+         row instead of stepping down with each image. */
+      .shot {
+        flex: 0 0 auto;
+        scroll-snap-align: center;
+        margin: 0;
+        width: 250px;
+        height: 540px;
+        display: grid;
+        grid-template-rows: 1fr auto;
+        align-items: center;
+      }
+      .shot img {
+        width: 250px;
+        height: auto;
+        display: block;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--bg);
+      }
+      .shot figcaption { color: var(--text-dim); font-size: 13px; margin-top: 8px; }
+      details.faq {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        padding: 12px 16px;
+        margin: 8px 0;
+      }
+      details.faq summary { cursor: pointer; font-weight: 600; }
+      details.faq p { color: var(--text-dim); font-size: 14px; margin: 10px 0 0; }
       .note {
         border-left: 3px solid var(--accent);
         background: var(--surface);
@@ -139,6 +300,74 @@
           <a class="btn" href="https://github.com/AboveColin/remote-for-xirp/releases/latest">Download the latest release</a>
         </div>
       </header>
+
+      <h2>What it looks like</h2>
+      <p class="sub" style="margin: 0 0 14px">
+        Screenshots from a phone. The machine, project and session names are made up; the
+        layout, spacing and colours are the real thing.
+      </p>
+      <div class="shots">
+        <figure class="shot">
+          <img
+            src="./screenshots/machines.png"
+            width="475"
+            height="430"
+            loading="lazy"
+            alt="The machines screen: one Mac online, five agents running, and a button to add a machine by scanning a pairing code."
+          />
+          <figcaption>Machines — several Macs, if you have them.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img
+            src="./screenshots/projects.png"
+            width="475"
+            height="510"
+            loading="lazy"
+            alt="A machine's projects, each with a count of sessions, how many are running, and how many branches they cover."
+          />
+          <figcaption>Projects on that machine.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img
+            src="./screenshots/sessions.png"
+            width="475"
+            height="390"
+            loading="lazy"
+            alt="Sessions in one project, each showing its branch, agent, context used, cost so far and last activity."
+          />
+          <figcaption>Sessions, with branch, agent, context and cost.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img
+            src="./screenshots/chat.png"
+            width="475"
+            height="950"
+            loading="lazy"
+            alt="A session transcript rendered as chat, with the agent's reply, a code block, a collapsed tool-call chip and a message box."
+          />
+          <figcaption>The transcript, as chat — and a box to answer it.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img
+            src="./screenshots/changes.png"
+            width="475"
+            height="540"
+            loading="lazy"
+            alt="A session's changed files, split into what the branch changed against main and what is not committed yet, with a link to the open pull request."
+          />
+          <figcaption>What it changed, committed and not.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img
+            src="./screenshots/diff.png"
+            width="475"
+            height="490"
+            loading="lazy"
+            alt="A syntax-coloured unified diff of one Python file, with added and removed lines and a hunk header."
+          />
+          <figcaption>The diff for one file.</figcaption>
+        </figure>
+      </div>
 
       <h2>Install</h2>
       <pre><code>curl -fsSL https://raw.githubusercontent.com/AboveColin/remote-for-xirp/main/install.sh | sh</code></pre>
@@ -208,6 +437,57 @@ xirp-remote install --generate-key # start it, and print a QR code</code></pre>
         to the agent's own dialog — no polling client can catch that, and pretending otherwise
         would be worse than leaving it out.
       </p>
+
+      <h2 id="faq">Questions</h2>
+      <details class="faq">
+        <summary>Does it work on Windows or Linux?</summary>
+        <p>
+          No. The host has to be macOS, because the Xirp daemon's access token exists only in
+          the desktop app's process environment, which only the same user on the same machine
+          can read.
+        </p>
+      </details>
+      <details class="faq">
+        <summary>Does my session data go through a cloud service?</summary>
+        <p>
+          No. The binary runs on your own Mac and serves the app over your own network. There
+          is no account and no third-party relay. Web Push notifications are the one
+          exception: their payloads are end-to-end encrypted per RFC 8291 before they reach
+          the browser vendor's push service.
+        </p>
+      </details>
+      <details class="faq">
+        <summary>Can I approve permission prompts from my phone?</summary>
+        <p>
+          No, and it is left out on purpose. The daemon holds a permission request open for
+          about half a second before falling through to the agent's own dialog, which is too
+          short for any polling client to catch. Use the real tmux pane view, where the
+          agent's own prompt appears and can be answered.
+        </p>
+      </details>
+      <details class="faq">
+        <summary>Do slash commands work?</summary>
+        <p>
+          Yes, in the terminal view. It shows the session's actual tmux pane, so slash
+          commands, model pickers and any other interactive prompt work without this app
+          needing to know they exist.
+        </p>
+      </details>
+      <details class="faq">
+        <summary>Does installing it start a server on my machine?</summary>
+        <p>
+          No. The installer places a binary and stops. Starting the service is a separate
+          explicit command, <code>xirp-remote install</code>, which also prints the QR code
+          for pairing.
+        </p>
+      </details>
+      <details class="faq">
+        <summary>Is this made by the Xirp developers?</summary>
+        <p>
+          No. It is an unaffiliated project that talks to the daemon's local API, and it is
+          MIT licensed.
+        </p>
+      </details>
 
       <footer>
         MIT licensed · unofficial, not affiliated with Xirp ·

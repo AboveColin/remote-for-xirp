@@ -3,7 +3,7 @@ name: pages
 on:
   push:
     branches: [main]
-    paths: ['site/**', '.github/workflows/pages.yml']
+    paths: ['site/**', 'install.sh', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 permissions:
@@ -34,7 +34,34 @@ jobs:
             grep -q "$needle" site/index.html || { echo "site/index.html is missing $needle" >&2; exit 1; }
           done
           python3 -c "import xml.dom.minidom; xml.dom.minidom.parse('site/sitemap.xml')"
+          # A malformed JSON-LD block is invisible: the page renders, the rich result
+          # silently never appears. Parse it here instead of hearing about it from Search
+          # Console six weeks later.
+          python3 -c "import json,re,pathlib; h=pathlib.Path('site/index.html').read_text(); b=re.findall(r'application/ld\+json\">(.*?)</script>',h,re.S); assert b,'no JSON-LD block'; [json.loads(x) for x in b]; print(len(b),'JSON-LD block(s) parse')"
           test -f site/icon.svg && test -f site/icon-512.png
+          # The card is referenced by og:image with fixed dimensions; a missing file makes
+          # every shared link render as a bare text row.
+          test -f site/og.png
+          test -f site/llms.txt
+          for shot in machines projects sessions chat changes diff; do
+            test -f "site/screenshots/$shot.png" || { echo "missing screenshot: $shot" >&2; exit 1; }
+          done
+          # llms.txt is a spec, not prose: an H1 and a blockquote summary are the two
+          # required parts.
+          head -1 site/llms.txt | grep -q '^# ' || { echo 'llms.txt needs an H1 first line' >&2; exit 1; }
+          grep -q '^> ' site/llms.txt || { echo 'llms.txt needs a blockquote summary' >&2; exit 1; }
+          # robots.txt must not block the public page, and must not have been swapped for
+          # the app's own Disallow-everything copy.
+          grep -q '^Allow: /' site/robots.txt
+          ! grep -q '^Disallow: /$' site/robots.txt
+
+      - name: Publish the installer at the site root
+        run: |
+          # So the short URL on the social card is real:
+          #   curl -fsSL remote-for-xirp.cdevries.dev/install.sh | sh
+          # Copied at deploy time rather than duplicated in site/, which keeps the repo
+          # root the single source of truth.
+          cp install.sh site/install.sh
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
