@@ -19,6 +19,7 @@ no database.
   <img src="site/screenshots/machines.png" alt="The machines screen" width="240" />
   <img src="site/screenshots/chat.png" alt="A session transcript, as chat" width="240" />
   <img src="site/screenshots/diff.png" alt="A file diff" width="240" />
+  <img src="site/screenshots/chat-dark.png" alt="The same transcript in dark mode" width="240" />
 </p>
 
 ## Install
@@ -68,6 +69,7 @@ Building from source, every CLI subcommand, and pinning which address it serves 
 | **Installable** | A PWA that lives on the home screen and opens full-screen. An Android APK can be built for your own origin — see [`deploy/android/`](deploy/android/), which also explains why one cannot be published for everyone. |
 | **Diagnostics** | Whether the daemon is reachable, tmux availability and live pane count, the daemon's database load, which feature modules this edition has, and the daemon's own log filtered to warnings and errors — which is where the real reason for a failure appears. |
 | **Multiple machines** | Each host is one Mac running Xirp. Add others and switch between them. |
+| **Light and dark** | Follows the phone by default, with an explicit override in Settings. The terminal view stays dark in both, because the agent picked its ANSI colours for a dark background. |
 
 Sessions without a tmux pane are marked and their composer hidden, because
 `session:message` is fire-and-forget and sending into a dead pane otherwise looks like

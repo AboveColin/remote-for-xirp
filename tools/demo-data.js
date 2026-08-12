@@ -7,6 +7,19 @@
 //
 // It is kept in the repo so the screenshots can be retaken after a UI change instead of
 // being re-invented, and so the invented names stay consistent.
+//
+// Two things that cost time the first time round:
+//
+//   - Install this *after* the app's own boot requests have landed. They finish a second
+//     or so after load and overwrite state.sessions with the real list, so a stub applied
+//     immediately looks like it did nothing.
+//   - The published screenshots are one phone screen each, 393x852, which is what makes a
+//     row of them look like a set rather than seven different crops. This injects that
+//     size so what you capture is what the site shows:
+//
+//       shotViewport();   // 393x852 column, composer pinned to its bottom
+//
+// The site's images are the top-left 393x852 region of the capture.
 
 (() => {
   const now = Date.now();
@@ -206,6 +219,33 @@ index 3f1c2ab..9d4e77c 100644
         n.nodeValue = window.__demoHost;
       }
     }
+  };
+
+  // A real phone's CSS viewport, applied to this page rather than to a device: the app's
+  // own layout is driven by --col, so pinning that plus the body box reproduces a phone
+  // screen in a desktop window.
+  window.shotViewport = () => {
+    document.querySelectorAll('style[data-shot]').forEach((n) => n.remove());
+    const style = document.createElement('style');
+    style.dataset.shot = '1';
+    style.textContent = `
+      :root { --col: 393px; }
+      html { background: #5a5f6a; }
+      body { position: relative; width: 393px; height: 852px; overflow: hidden; }
+      .composer { position: absolute; left: 0; right: auto; bottom: 0; width: 393px; margin: 0; }
+      .jump { position: absolute; left: 196px; bottom: 96px; }
+    `;
+    document.head.append(style);
+    // Polling would repaint a machine card mid-capture and put the real hostname back.
+    window.startPolling = () => {};
+    if (state.timer) clearInterval(state.timer);
+  };
+
+  // Light or dark, for the pair of transcript shots.
+  window.shotTheme = (which) => {
+    settings.theme = which;
+    applyTheme();
+    paintSettings();
   };
 
   // Each shot: set the view, let it settle, rename what the app cannot know is private.

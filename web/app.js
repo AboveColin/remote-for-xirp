@@ -77,7 +77,14 @@ function saveHosts() {
 }
 
 const SETTINGS_KEY = 'xr.settings';
-const DEFAULTS = { mode: 'chat', limit: 40, filter: 'active', timestamps: 'off', sendMode: 'submit' };
+const DEFAULTS = {
+  mode: 'chat',
+  limit: 40,
+  filter: 'active',
+  timestamps: 'off',
+  sendMode: 'submit',
+  theme: 'auto',
+};
 
 function loadSettings() {
   try {
@@ -97,6 +104,26 @@ function saveSettings() {
     // in memory; silently losing a preference beats an error the user cannot act on.
   }
 }
+
+// The stylesheet follows the system by default and honours a `data-theme` override, so
+// applying a preference is one attribute. The theme-color meta has to move with it:
+// left at a dark value, iOS paints the status bar area dark above a light page.
+function applyTheme() {
+  const root = document.documentElement;
+  if (settings.theme === 'auto') delete root.dataset.theme;
+  else root.dataset.theme = settings.theme;
+  const dark =
+    settings.theme === 'dark' ||
+    (settings.theme === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = dark ? '#0f1216' : '#f6f7f9';
+}
+
+applyTheme();
+// Following the system means following it while the app is open, not only at load.
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (settings.theme === 'auto') applyTheme();
+});
 
 let state = {
   view: 'login',
@@ -171,7 +198,12 @@ function setLink(ok, why) {
 let toastTimer = null;
 function toast(msg) {
   const t = el('toast');
-  t.textContent = msg;
+  const text = String(msg);
+  // A rejected daemon query comes back as the whole SQL statement. The first sentence is
+  // the part that means anything on a phone; the rest stays in the title, and the
+  // stylesheet clamps whatever is left to three lines.
+  t.textContent = text.length > 180 ? `${text.slice(0, 180)}…` : text;
+  t.title = text;
   t.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (t.hidden = true), 2600);
@@ -1559,6 +1591,10 @@ function paintSettings() {
   paintSegmented('set-limit', settings.limit);
   paintSegmented('set-filter', settings.filter);
   paintSegmented('set-timestamps', settings.timestamps);
+  paintSegmented('set-theme', settings.theme);
+  // The same switch also sits on the session screen, which is where the choice is
+  // actually made; both write one setting, so both have to be repainted.
+  paintSegmented('detail-mode', settings.mode);
 }
 
 function wireSegmented(id, key, cast = (v) => v) {
@@ -1577,6 +1613,7 @@ function wireSegmented(id, key, cast = (v) => v) {
       }
     }
     if (key === 'mode') setTerminalMode(settings.mode === 'terminal');
+    if (key === 'theme') applyTheme();
     if (state.sessionId && settings.mode !== 'terminal') refreshDetail();
   });
 }
@@ -1585,6 +1622,13 @@ wireSegmented('set-mode', 'mode');
 wireSegmented('set-limit', 'limit', Number);
 wireSegmented('set-filter', 'filter');
 wireSegmented('set-timestamps', 'timestamps');
+wireSegmented('set-theme', 'theme');
+wireSegmented('detail-mode', 'mode');
+
+// Paint the controls once at startup. The session screen's view switch is reachable
+// without ever opening Settings, and an unpainted segmented control shows no selection
+// at all — which reads as "none of these is active".
+paintSettings();
 
 el('settings-back').addEventListener('click', () => {
   show('machines');
@@ -1729,10 +1773,16 @@ async function refreshDetail(scroll = false) {
   el('nopane-note').hidden = !noPane;
   el('composer').hidden = noPane;
 
+  // Status leads and is the only coloured thing here; the rest is one grey line of
+  // reference facts, separated by the stylesheet rather than by more boxes.
   const meta = el('detail-meta');
   meta.innerHTML = '';
+  const status = document.createElement('span');
+  status.className = `pill ${statusClass(s.status)}`;
+  status.textContent = s.waitingReason ? `waiting: ${s.waitingReason}` : s.status;
+  meta.append(status);
+
   const tags = [];
-  tags.push(s.waitingReason ? `waiting: ${s.waitingReason}` : s.status);
   if (s.currentAgent) tags.push(s.currentAgent);
   if (s.model) tags.push(s.model);
   const p = pct(s);
