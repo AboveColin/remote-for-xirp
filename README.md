@@ -291,7 +291,7 @@ the Mac as the user running Xirp. So what actually contains it is:
 
 ## A landing page
 
-[abovecolin.github.io/remote-for-xirp](https://abovecolin.github.io/remote-for-xirp/) —
+[remote-for-xirp.cdevries.dev](https://remote-for-xirp.cdevries.dev/) —
 built from `site/` by the `pages` workflow.
 
 ## Putting it behind a reverse proxy
