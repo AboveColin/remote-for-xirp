@@ -68,6 +68,15 @@ node_modules, no database.
   strips it from the address bar as soon as it has a cookie.
 - **Installable PWA** with a service worker, so it lives on the home screen and opens
   full-screen. See `deploy/android/` to wrap it as an APK.
+- **Diagnostics**, from settings: whether the daemon is reachable and on which port,
+  tmux availability and live pane count, the daemon's database load with its busiest
+  tables, which feature modules the edition has, and the daemon's own log filtered to
+  info, warnings or errors. The log is where the real reason for a failure appears —
+  it is how "the message was accepted" turned out to mean `sendKeys exited with code 1`.
+- **Sessions with no pane are marked**, and their composer is hidden. `session:message`
+  is fire-and-forget, so sending into a dead pane otherwise looks like success.
+- **Search is hidden where the edition lacks it.** Search is a module; `modules:list`
+  says whether it is present.
 - **Settings screen** for transcript mode (Chat / Full / Terminal), how many messages
   load, the default filter, timestamps, hosts and pairing. Stored per browser.
 - **Markdown rendering** for agent replies: fenced code blocks that scroll sideways
@@ -196,7 +205,7 @@ the Mac as the user running Xirp. So what actually contains it is:
 - Cross-origin access is enabled **only when a key is required**. On an open instance,
   echoing an origin would let any web page you happen to visit read and drive your
   sessions.
-- Only an explicit allowlist of daemon messages is reachable — 16 of the daemon's
+- Only an explicit allowlist of daemon messages is reachable — 22 of the daemon's
   212 message types. It can list, read, search, message, stop and create sessions,
   and read git status. It cannot commit, push, open a PR, attach to a terminal,
   delete a session or change any app setting: `git:` writes, `terminal:`,
@@ -251,6 +260,8 @@ cookie from `POST /api/auth`. In open mode no credential is needed.
 | GET | `/api/sessions/{id}/pane?lines=N` | The session's tmux pane, ANSI intact. |
 | POST | `/api/sessions/{id}/keys?key=` | Send one allowlisted key (escape, tab, up, down, enter, ctrl-c, …). |
 | GET | `/api/pair[?format=png]` | Pairing URL, or a QR PNG of it. |
+| GET | `/api/diagnostics` | Daemon, tmux, database and module state. |
+| GET | `/api/logs?level=&limit=` | Daemon log records at or above a pino level. |
 
 ### Four traps in the daemon's API worth knowing
 

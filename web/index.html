@@ -167,6 +167,12 @@
       </header>
 
       <div id="detail-meta" class="meta"></div>
+      <!-- Shown when a session has no tmux pane: the terminal would be empty and
+           anything typed at it is accepted and dropped. -->
+      <div id="nopane-note" class="nopane-note" hidden>
+        This session has no terminal pane, so the terminal is empty and anything sent to
+        it is dropped. Stop it, or restart it from the desktop.
+      </div>
       <div id="detail-git" class="meta" hidden></div>
       <div id="detail-urls" class="urls" hidden></div>
       <details id="detail-commits" class="commits" hidden>
@@ -266,6 +272,12 @@
           <button type="submit" class="btn">Add host</button>
         </form>
 
+        <h2>Diagnostics</h2>
+        <p class="subdued setting-hint">
+          Daemon health, database load, tmux panes and the daemon's own log.
+        </p>
+        <button id="open-diag" class="btn">Open diagnostics</button>
+
         <h2>Pair another device</h2>
         <p class="subdued setting-hint">
           Scan this with a phone to open the app with the access key already set.
@@ -279,6 +291,24 @@
           Settings are stored in this browser only, not on the server.
         </p>
       </div>
+    </section>
+
+    <!-- Diagnostics -->
+    <section id="diag-view" hidden>
+      <header class="topbar">
+        <button id="diag-back" class="icon-btn" aria-label="Back">‹</button>
+        <div class="brand">Diagnostics</div>
+        <button id="diag-refresh" class="icon-btn" aria-label="Refresh">↻</button>
+      </header>
+      <div id="diag-body" class="diag"></div>
+      <h2 class="diag-h">Daemon log</h2>
+      <nav class="filters" id="diag-levels">
+        <button class="chip chip-on" data-level="30">Info</button>
+        <button class="chip" data-level="40">Warnings</button>
+        <button class="chip" data-level="50">Errors</button>
+      </nav>
+      <div id="diag-log" class="diaglog"></div>
+      <footer class="foot subdued" id="diag-foot"></footer>
     </section>
 
     <!-- New session sheet -->

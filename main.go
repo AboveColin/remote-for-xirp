@@ -102,6 +102,8 @@ func main() {
 	mux.Handle("/api/search", authed(http.HandlerFunc(handleSearch)))
 	mux.Handle("/api/models", authed(http.HandlerFunc(handleModels)))
 	mux.Handle("/api/pair", authed(http.HandlerFunc(handlePair)))
+	mux.Handle("/api/diagnostics", authed(http.HandlerFunc(handleDiagnostics)))
+	mux.Handle("/api/logs", authed(http.HandlerFunc(handleLogs)))
 	mux.Handle("/api/sessions", authed(http.HandlerFunc(handleSessions)))
 	mux.Handle("/api/sessions/", authed(http.HandlerFunc(handleSession)))
 	mux.Handle("/api/permissions", authed(http.HandlerFunc(handlePermissions)))
@@ -243,6 +245,7 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	raw, _ := res["sessions"].([]any)
 	names := projectNames()
+	tm := tmuxStatus()
 	out := make([]map[string]any, 0, len(raw))
 	for _, s := range raw {
 		sm, ok := s.(map[string]any)
@@ -253,9 +256,22 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 		if id, ok := sm["projectId"].(string); ok {
 			p["projectName"] = names[id]
 		}
+		// A session can be `running` in the database with no pane behind it. Only the
+		// tmux side knows, and without this the terminal view shows nothing and a
+		// message is accepted and dropped.
+		if id, ok := sm["id"].(string); ok && tm.Available {
+			if tmuxName, _ := sm["tmuxSession"].(string); tmuxName != "" {
+				if !tm.Panes[id] {
+					// Confirm before reporting a missing pane: the cached list can
+					// predate a session that was just created.
+					tm = tmuxStatusFresh(true)
+				}
+				p["hasPane"] = tm.Panes[id]
+			}
+		}
 		out = append(out, p)
 	}
-	writeJSON(w, 200, map[string]any{"sessions": out})
+	writeJSON(w, 200, map[string]any{"sessions": out, "modules": activeModules()})
 }
 
 // handleSession serves /api/sessions/{id} and /api/sessions/{id}/{action}.

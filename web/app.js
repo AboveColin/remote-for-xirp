@@ -24,6 +24,7 @@ const views = {
   list: el('list-view'),
   detail: el('detail-view'),
   settings: el('settings-view'),
+  diag: el('diag-view'),
 };
 
 // ---- settings ----
@@ -104,6 +105,7 @@ let state = {
   lastError: null,
   query: '',
   project: null,
+  modules: null,
 };
 
 // ---- plumbing ----
@@ -357,6 +359,119 @@ el('sessions-back').addEventListener('click', () => {
 });
 el('projects-new').addEventListener('click', openCreateSheet);
 
+// ---- diagnostics ----
+//
+// Three of these change what the app does rather than just being shown: `modules`
+// decides whether search is offered at all, `tmux.available` decides whether the
+// terminal view can work, and a session's `hasPane` decides whether its pane and
+// composer are worth anything.
+
+let diagLevel = 30;
+
+function diagCard(title, rows) {
+  const card = document.createElement('div');
+  card.className = 'diag-card';
+  const h = document.createElement('h3');
+  h.textContent = title;
+  card.append(h);
+  for (const [label, value, tone] of rows) {
+    const row = document.createElement('div');
+    row.className = 'diag-row' + (tone ? ` is-${tone}` : '');
+    const l = document.createElement('span');
+    l.textContent = label;
+    const v = document.createElement('span');
+    v.textContent = value;
+    row.append(l, v);
+    card.append(row);
+  }
+  return card;
+}
+
+async function refreshDiagnostics() {
+  const body = el('diag-body');
+  try {
+    const d = await api('/api/diagnostics');
+    setLink(true);
+    body.innerHTML = '';
+
+    body.append(
+      diagCard('Daemon', [
+        ['Reachable', d.daemon?.reachable ? 'yes' : 'no', d.daemon?.reachable ? 'good' : 'bad'],
+        ['Port', d.daemon?.port || d.daemon?.error || '—'],
+        ['Update waiting', d.update?.disabled ? 'updates disabled' : d.update?.available ? `yes (${d.update.updateCount})` : 'no'],
+      ])
+    );
+
+    body.append(
+      diagCard('tmux', [
+        ['Available', d.tmux?.available ? 'yes' : 'no', d.tmux?.available ? 'good' : 'bad'],
+        ['Live panes', String(d.tmux?.panes ?? '—')],
+        ['Orphaned', String(d.tmux?.orphaned ?? 0), d.tmux?.orphaned ? 'bad' : ''],
+      ])
+    );
+
+    if (d.db) {
+      const cpm = d.db.callsPerMinute || {};
+      const rows = [
+        ['Queries / min (1m)', String(Math.round(cpm['1m'] ?? 0))],
+        ['Queries / min (15m avg)', String(Math.round(cpm['15m'] ?? 0))],
+        ['p95 SELECT', `${d.db.p95Duration?.SELECT ?? '—'} ms`],
+      ];
+      for (const t of d.db.topTables || []) rows.push([`  ${t.table}`, String(Math.round(t.queries))]);
+      body.append(diagCard('Database', rows));
+    }
+
+    body.append(diagCard('Modules', (d.modules || []).map((m) => [m, 'active'])));
+    el('diag-foot').textContent = `checked ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    if (e.message !== 'unauthorized') {
+      setLink(false, e.message);
+      body.textContent = e.message;
+    }
+  }
+
+  try {
+    const { records } = await api(`/api/logs?level=${diagLevel}&limit=60`);
+    const box = el('diag-log');
+    box.innerHTML = '';
+    if (!records || !records.length) {
+      const p = document.createElement('p');
+      p.className = 'subdued';
+      p.textContent = 'Nothing at this level.';
+      box.append(p);
+    }
+    for (const r of records || []) {
+      const line = document.createElement('div');
+      line.className = `logline lvl-${r.level}`;
+      const t = document.createElement('time');
+      t.textContent = new Date(r.time).toLocaleTimeString();
+      const msg = document.createElement('p');
+      msg.textContent = r.msg;
+      line.append(t, msg);
+      box.append(line);
+    }
+  } catch {
+    el('diag-log').textContent = 'Log unavailable.';
+  }
+}
+
+el('open-diag').addEventListener('click', () => {
+  show('diag');
+  refreshDiagnostics();
+});
+el('diag-back').addEventListener('click', () => {
+  paintSettings();
+  show('settings');
+});
+el('diag-refresh').addEventListener('click', refreshDiagnostics);
+el('diag-levels').addEventListener('click', (e) => {
+  const btn = e.target.closest('.chip');
+  if (!btn) return;
+  diagLevel = Number(btn.dataset.level);
+  for (const c of el('diag-levels').children) c.classList.toggle('chip-on', c === btn);
+  refreshDiagnostics();
+});
+
 // ---- machines screen ----
 //
 // Cards, one per machine, each probed independently so one unreachable machine does
@@ -598,8 +713,9 @@ function sessionCard(s) {
   name.className = 'card-name';
   name.textContent = s.name || s.goal || s.id.slice(0, 8);
   const pill = document.createElement('span');
-  pill.className = `pill ${statusClass(s.status)}`;
-  pill.textContent = s.waitingReason ? 'waiting' : s.status;
+  const noPane = s.hasPane === false && ACTIVE_STATUSES.includes(s.status);
+  pill.className = `pill ${noPane ? 'pill-nopane' : statusClass(s.status)}`;
+  pill.textContent = noPane ? 'no pane' : s.waitingReason ? 'waiting' : s.status;
   top.append(name, pill);
 
   const sub = document.createElement('div');
@@ -659,8 +775,15 @@ async function refreshList() {
   // session list a moment after they appeared.
   if (state.query) return;
   try {
-    const { sessions } = await api('/api/sessions');
-    state.sessions = sessions || [];
+    const body = await api('/api/sessions');
+    state.sessions = body.sessions || [];
+    if (body.modules) {
+      state.modules = body.modules;
+      // Search is a module. Where the edition does not have it, the box can only ever
+      // return nothing, so it is removed rather than left to disappoint.
+      const searchable = state.modules.includes('session-search');
+      el('search').closest('.searchbar').hidden = !searchable;
+    }
     state.lastError = null;
     setLink(true);
   } catch (e) {
@@ -1134,6 +1257,12 @@ async function refreshDetail(scroll = false) {
   el('detail-sub').textContent = [s.projectName, s.branch].filter(Boolean).join(' · ');
 
   el('ack').hidden = !(s.status === 'completed' || s.status === 'failed');
+
+  // No pane means the terminal has nothing to render and a message would be accepted
+  // and dropped, since session:message is fire-and-forget. Say that plainly.
+  const noPane = s.hasPane === false && ACTIVE_STATUSES.includes(s.status);
+  el('nopane-note').hidden = !noPane;
+  el('composer').hidden = noPane;
 
   const meta = el('detail-meta');
   meta.innerHTML = '';

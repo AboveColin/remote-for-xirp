@@ -1404,3 +1404,96 @@ textarea:focus {
 .manual .btn {
   margin-top: 18px;
 }
+
+/* ---- diagnostics ---- */
+
+.diag {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+}
+.diag-card {
+  background: linear-gradient(180deg, var(--surface-hi), var(--surface));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+}
+.diag-card h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.diag-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  padding: 3px 0;
+}
+.diag-row span:last-child {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.diag-row.is-bad span:last-child {
+  color: var(--danger);
+}
+.diag-row.is-good span:last-child {
+  color: var(--ok);
+}
+.diag-h {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 18px 14px 0;
+}
+.diaglog {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 14px calc(20px + env(safe-area-inset-bottom));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+.logline {
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  border-left: 2px solid var(--line);
+}
+.logline.lvl-40 {
+  border-left-color: var(--warn);
+}
+.logline.lvl-50 {
+  border-left-color: var(--danger);
+}
+.logline time {
+  color: var(--text-dim);
+  flex: none;
+}
+.logline p {
+  margin: 0;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* A session whose pane is gone: the terminal has nothing to show and typing at it
+   would be accepted and dropped. */
+.pill-nopane {
+  color: var(--warn);
+  background: rgba(240, 169, 46, 0.15);
+}
+.nopane-note {
+  margin: 10px 14px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: rgba(240, 169, 46, 0.08);
+  font-size: 12px;
+  color: var(--text);
+}
