@@ -44,11 +44,13 @@ jobs:
             https://*) ;;
             *) echo "The origin must be https: a TWA cannot verify a plain-http origin." >&2; exit 1 ;;
           esac
+          # Report the names of the secrets to add, not the names of the variables they
+          # happen to be read into.
           missing=""
-          for v in KEYSTORE_B64 KEYSTORE_PASSWORD KEY_PASSWORD KEY_ALIAS; do
-            eval "val=\${$v:-}"
-            [ -n "$val" ] || missing="$missing $v"
-          done
+          [ -n "${KEYSTORE_B64:-}" ]      || missing="$missing ANDROID_KEYSTORE_BASE64"
+          [ -n "${KEYSTORE_PASSWORD:-}" ] || missing="$missing ANDROID_KEYSTORE_PASSWORD"
+          [ -n "${KEY_PASSWORD:-}" ]      || missing="$missing ANDROID_KEY_PASSWORD"
+          [ -n "${KEY_ALIAS:-}" ]         || missing="$missing ANDROID_KEY_ALIAS
           if [ -n "$missing" ]; then
             cat >&2 <<MSG
           Missing repository secrets:$missing
