@@ -52,10 +52,10 @@ var (
 	pushMu   sync.Mutex
 	pushData pushState
 	// Last status seen per session, so a notification fires on a change rather than on
-	// every poll. Populated on the first pass without notifying, otherwise starting the
-	// service would announce every session that had already finished.
+	// every poll. Empty until the first pass, which is what keeps that pass quiet:
+	// otherwise starting the service would announce every session that had already
+	// finished.
 	lastStatus  = map[string]string{}
-	pushPrimed  bool
 	pushStarted bool
 )
 
@@ -327,19 +327,21 @@ func startPushWatcher() {
 	}()
 }
 
-func checkForFinished() {
-	res, err := client.Call(map[string]any{"type": "sessions:list"}, "sessions:list", 20*time.Second)
-	if err != nil {
-		return
-	}
-	raw, _ := res["sessions"].([]any)
-	names := projectNames()
+// pushEvent is one buzz: the line it shows, and the session a tap opens.
+type pushEvent struct {
+	title, body, id string
+}
 
-	type event struct {
-		title, body, id string
-	}
-	var events []event
-	seen := map[string]bool{}
+// statusEvents decides which status changes deserve a notification and returns the
+// statuses to remember for the next pass.
+//
+// Kept separate from the sending, and pure, so the rules can be read and tested on
+// their own. `prev` decides everything: an empty one yields no events, which is what
+// makes the first pass after startup quiet rather than announcing every session that
+// finished hours ago.
+func statusEvents(raw []any, names map[string]string, prev map[string]string) ([]pushEvent, map[string]string) {
+	now := make(map[string]string, len(raw))
+	var events []pushEvent
 
 	for _, s := range raw {
 		sm, ok := s.(map[string]any)
@@ -347,50 +349,78 @@ func checkForFinished() {
 			continue
 		}
 		id, _ := sm["id"].(string)
-		status, _ := sm["status"].(string)
 		if id == "" {
 			continue
 		}
-		seen[id] = true
-		prev, known := lastStatus[id]
-		lastStatus[id] = status
-		if !pushPrimed || !known || prev == status {
+		status, _ := sm["status"].(string)
+		now[id] = status
+		was, known := prev[id]
+		if !known || was == status {
 			continue
 		}
 
 		name, _ := sm["name"].(string)
 		if name == "" {
-			name = id[:8]
+			name = shortID(id)
 		}
 		projectID, _ := sm["projectId"].(string)
 		where := names[projectID]
+
 		switch status {
+		case "finished":
+			// The agent's turn ended with nobody at the desk. The daemon reserves
+			// `idle` for the same event while someone is watching it there, so
+			// `finished` is the case this app exists for: it is the status a turn
+			// lands in when you are away, and it is not `completed`.
+			events = append(events, pushEvent{name, place("Finished", where), id})
 		case "completed":
-			events = append(events, event{name, fmt.Sprintf("Finished in %s", where), id})
+			// The session itself ended: the agent exited, or someone stopped it.
+			events = append(events, pushEvent{name, place("Ended", where), id})
 		case "failed":
-			events = append(events, event{name, fmt.Sprintf("Failed in %s", where), id})
+			events = append(events, pushEvent{name, place("Failed", where), id})
 		case "waiting":
 			reason, _ := sm["waitingReason"].(string)
 			if reason == "" {
 				reason = "waiting for you"
 			}
-			events = append(events, event{name, reason, id})
+			events = append(events, pushEvent{name, reason, id})
 		}
-	}
-
-	// Forget sessions that no longer exist, so the map does not grow forever.
-	for id := range lastStatus {
-		if !seen[id] {
-			delete(lastStatus, id)
-		}
-	}
-
-	if !pushPrimed {
-		pushPrimed = true
-		return
 	}
 
 	sort.Slice(events, func(i, j int) bool { return events[i].title < events[j].title })
+	return events, now
+}
+
+// place appends the project when there is one, so an unknown project reads as
+// "Finished" rather than "Finished in ".
+func place(what, where string) string {
+	if where == "" {
+		return what
+	}
+	return what + " in " + where
+}
+
+// shortID is the fallback label for a session the daemon never named. Sliced rather
+// than assumed 36 characters, because a slice past the end panics.
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+func checkForFinished() {
+	res, err := client.Call(map[string]any{"type": "sessions:list"}, "sessions:list", 20*time.Second)
+	if err != nil {
+		return
+	}
+	raw, _ := res["sessions"].([]any)
+
+	events, now := statusEvents(raw, projectNames(), lastStatus)
+	// Replacing the map rather than updating it also drops any session the daemon no
+	// longer lists, so the table cannot grow for the life of the process.
+	lastStatus = now
+
 	for _, e := range events {
 		sent, errs := sendPush(map[string]any{
 			"title":     e.title,

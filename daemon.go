@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -114,6 +115,10 @@ func discover() (Creds, error) {
 	return c, nil
 }
 
+// discoverCreds is the seam the tests dial through: they point the client at a fake
+// daemon instead of at the running app's process environment.
+var discoverCreds = discover
+
 // tokenOfPID reads CHIRP_WS_TOKEN out of one process's environment.
 func tokenOfPID(pid string) string {
 	env, err := exec.Command("ps", "-E", "-o", "command=", "-p", pid).Output()
@@ -144,7 +149,7 @@ func (c *Client) connect() error {
 	if c.conn != nil {
 		return nil
 	}
-	creds, err := discover()
+	creds, err := discoverCreds()
 	if err != nil {
 		return err
 	}
@@ -166,26 +171,40 @@ func (c *Client) drop() {
 	}
 }
 
-// Call sends one message and returns the first reply whose type is wantType.
-// Unrelated broadcasts (the daemon pushes session/terminal events unprompted)
-// are skipped. An `error` reply for our request type is surfaced as an error.
-func (c *Client) Call(req map[string]any, wantType string, timeout time.Duration) (map[string]any, error) {
+// timeoutError says the daemon did not answer in time. It is a distinct type because
+// it is the one failure Call must not retry: the request is already on the wire and the
+// daemon may still act on it, so a resend of session:create makes a second session.
+type timeoutError struct{ want string }
+
+func (e timeoutError) Error() string { return "the daemon did not answer with " + e.want + " in time" }
+
+// Call sends one message and returns the first reply whose type is wantType. It skips
+// the unrelated broadcasts the daemon pushes unprompted, and it surfaces errors in both
+// shapes they arrive in:
+//
+//   - a generic `{type:"error", originalType:<our request>}` frame,
+//   - one of the daemon's own typed error frames, named per call in errTypes,
+//     because the naming is not uniform: `git:error` covers the whole git category
+//     while `session:swap-agent:error` belongs to that one request. Their
+//     responseTypes in `api:describe` say which a call can receive.
+func (c *Client) Call(req map[string]any, wantType string, timeout time.Duration, errTypes ...string) (map[string]any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	res, err := c.call(req, wantType, timeout)
-	if err != nil && c.conn == nil {
-		// Connection was dropped (app restarted, token rotated). Retry once so a
+	res, err := c.call(req, wantType, timeout, errTypes...)
+	var te timeoutError
+	if err != nil && c.conn == nil && !errors.As(err, &te) {
+		// The connection broke (app restarted, token rotated). Retry once so a
 		// restart of Xirp doesn't require a restart of the bridge.
 		if err2 := c.connect(); err2 != nil {
 			return nil, err2
 		}
-		return c.call(req, wantType, timeout)
+		return c.call(req, wantType, timeout, errTypes...)
 	}
 	return res, err
 }
 
-func (c *Client) call(req map[string]any, wantType string, timeout time.Duration) (map[string]any, error) {
+func (c *Client) call(req map[string]any, wantType string, timeout time.Duration, errTypes ...string) (map[string]any, error) {
 	if err := c.connect(); err != nil {
 		return nil, err
 	}
@@ -204,28 +223,69 @@ func (c *Client) call(req map[string]any, wantType string, timeout time.Duration
 
 	deadline := time.Now().Add(timeout)
 	for {
+		// Out of time. Drop the connection rather than keep it: the answer may still
+		// be on its way, and the next call waiting for that same type would read it as
+		// its own. One redial costs a discover plus a dial.
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("timeout waiting for %s", wantType)
+			c.drop()
+			return nil, timeoutError{want: wantType}
 		}
 		c.conn.SetReadDeadline(deadline)
 		_, raw, err := c.conn.ReadMessage()
 		if err != nil {
 			c.drop()
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				return nil, timeoutError{want: wantType}
+			}
 			return nil, fmt.Errorf("read while waiting for %s: %w", wantType, err)
 		}
 		var msg map[string]any
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			continue
 		}
-		switch msg["type"] {
-		case wantType:
+		mt, _ := msg["type"].(string)
+		if mt == wantType {
 			return msg, nil
-		case "error":
+		}
+		if mt == "error" {
 			if orig, ok := msg["originalType"].(string); ok && orig == req["type"] {
 				return nil, fmt.Errorf("daemon rejected %s: %v", orig, msg["message"])
 			}
+			continue
+		}
+		for _, et := range errTypes {
+			if mt == et {
+				return nil, daemonError(mt, msg)
+			}
 		}
 	}
+}
+
+// daemonError turns one of the daemon's typed error frames into a Go error.
+//
+// These carry more than a sentence. `git:error` names a code (DIRECTORY_MISSING when a
+// worktree was deleted) and `session:swap-agent:error` adds a hint written for the
+// person reading it, such as "restart the session to enable it" for a session created
+// before the running build. Dropping those loses the only actionable text there is.
+func daemonError(kind string, msg map[string]any) error {
+	code, _ := msg["code"].(string)
+	text, _ := msg["message"].(string)
+	hint, _ := msg["hint"].(string)
+
+	said := code
+	if text != "" {
+		if said != "" {
+			said += ": "
+		}
+		said += text
+	}
+	if said == "" {
+		return fmt.Errorf("the daemon answered %s with no detail", kind)
+	}
+	if hint != "" {
+		said += " (hint: " + hint + ")"
+	}
+	return errors.New(said)
 }
 
 // Fire sends a message that has no declared response type (`session:message` is

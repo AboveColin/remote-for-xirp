@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -48,23 +50,25 @@ func main() {
 	}
 
 	remoteKey = os.Getenv("XIRP_REMOTE_KEY")
+	addr := os.Getenv("XIRP_REMOTE_ADDR")
+	if addr == "" {
+		addr = defaultAddr
+	}
+
 	switch {
 	case remoteKey == "":
-		// Open mode, by explicit choice. The service is only reachable from the
-		// LAN and the WireGuard tunnel (no port forward, no Cloudflare tunnel),
-		// so the network is the boundary. Anyone who can reach it can type into
-		// agent sessions, which is code execution as this user.
-		log.Print("XIRP_REMOTE_KEY is unset: running OPEN, no authentication. Reachable from LAN and WireGuard.")
+		// Open mode, by explicit choice. In that mode the network is the whole
+		// boundary, and anyone who can reach the address can type into agent
+		// sessions, which is code execution as this user. So the warning names the
+		// address it listens on: a bind of 127.0.0.1 reaches nobody else, and
+		// 0.0.0.0 reaches everything that can route to this machine.
+		log.Printf("XIRP_REMOTE_KEY is unset: running OPEN on %s, no authentication. Anyone who can reach that address can drive your agent sessions.", addr)
 	case len(remoteKey) < 16:
 		// A short key is worse than none: it looks like protection while being
 		// guessable, so fail loudly rather than half-protect.
 		log.Fatal("XIRP_REMOTE_KEY is set but shorter than 16 characters; use a longer key or unset it for open mode")
 	default:
 		log.Print("authentication enabled")
-	}
-	addr := os.Getenv("XIRP_REMOTE_ADDR")
-	if addr == "" {
-		addr = defaultAddr
 	}
 
 	sub, err := fs.Sub(webFS, "web")
@@ -97,7 +101,6 @@ func main() {
 			h.ServeHTTP(w, r)
 		})
 	}
-	_ = handler
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": "ok"})
 	})
@@ -114,6 +117,7 @@ func main() {
 	mux.Handle("/api/push/unsubscribe", authed(http.HandlerFunc(handlePushUnsubscribe)))
 	mux.Handle("/api/push/test", authed(http.HandlerFunc(handlePushTest)))
 	mux.Handle("/api/logs", authed(http.HandlerFunc(handleLogs)))
+	mux.Handle("/api/prompts", authed(http.HandlerFunc(handlePrompts)))
 	mux.Handle("/api/sessions", authed(http.HandlerFunc(handleSessions)))
 	mux.Handle("/api/sessions/", authed(http.HandlerFunc(handleSession)))
 	mux.Handle("/api/permissions", authed(http.HandlerFunc(handlePermissions)))
@@ -224,35 +228,50 @@ func project(src map[string]any, fields []string) map[string]any {
 	return out
 }
 
+// One `projects:list` answer, shared by the name lookup on every session row and by
+// the base-branch lookup on every diff. Guarded because the push watcher reads it from
+// its own goroutine while HTTP handlers write it.
 type projectCache struct {
 	names map[string]string
+	base  map[string]string
 	at    time.Time
 }
 
-var pcache projectCache
+var (
+	projectMu sync.Mutex
+	pcache    projectCache
+)
 
-func projectNames() map[string]string {
+func projectsCached() projectCache {
+	projectMu.Lock()
+	defer projectMu.Unlock()
 	if time.Since(pcache.at) < 60*time.Second && pcache.names != nil {
-		return pcache.names
+		return pcache
 	}
 	names := map[string]string{}
+	base := map[string]string{}
 	res, err := client.Call(map[string]any{"type": "projects:list"}, "projects:list", 10*time.Second)
 	if err == nil {
 		if list, ok := res["projects"].([]any); ok {
 			for _, p := range list {
-				if pm, ok := p.(map[string]any); ok {
-					id, _ := pm["id"].(string)
-					name, _ := pm["name"].(string)
-					if id != "" {
-						names[id] = name
-					}
+				pm, ok := p.(map[string]any)
+				if !ok {
+					continue
 				}
+				id, _ := pm["id"].(string)
+				if id == "" {
+					continue
+				}
+				names[id], _ = pm["name"].(string)
+				base[id], _ = pm["defaultBranch"].(string)
 			}
 		}
 	}
-	pcache = projectCache{names: names, at: time.Now()}
-	return names
+	pcache = projectCache{names: names, base: base, at: time.Now()}
+	return pcache
 }
+
+func projectNames() map[string]string { return projectsCached().names }
 
 // handleSessions serves GET (list) and POST (create) on /api/sessions.
 func handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -268,6 +287,7 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 	raw, _ := res["sessions"].([]any)
 	names := projectNames()
 	tm := tmuxStatus()
+	forcedFresh := false
 	out := make([]map[string]any, 0, len(raw))
 	for _, s := range raw {
 		sm, ok := s.(map[string]any)
@@ -283,10 +303,13 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 		// message is accepted and dropped.
 		if id, ok := sm["id"].(string); ok && tm.Available {
 			if tmuxName, _ := sm["tmuxSession"].(string); tmuxName != "" {
-				if !tm.Panes[id] {
+				if !tm.Panes[id] && !forcedFresh {
 					// Confirm before reporting a missing pane: the cached list can
-					// predate a session that was just created.
+					// predate a session that was just created. Once per request. A
+					// forced read bypasses the cache, so doing it per paneless session
+					// meant two daemon calls each, every five seconds.
 					tm = tmuxStatusFresh(true)
+					forcedFresh = true
 				}
 				p["hasPane"] = tm.Panes[id]
 			}
@@ -369,6 +392,15 @@ func sessionDetail(w http.ResponseWriter, r *http.Request, id string) {
 		}
 	}
 	payload := map[string]any{"session": out}
+	// The terminal view draws the tmux pane, not the transcript, so its poll asks for
+	// the session alone. Parsing a transcript means spawning `node squab session-parse`,
+	// measured at 0.07 s and 3.5 MB of JSON for a 1111-message session, every four
+	// seconds, for something nothing displays.
+	if r.URL.Query().Get("transcript") == "0" {
+		payload["transcriptSkipped"] = true
+		writeJSON(w, 200, payload)
+		return
+	}
 	if parsed, err := client.ParseSession(id, limit); err == nil {
 		payload["messages"] = transcript(parsed)
 		payload["messageCount"] = parsed["messageCount"]
@@ -510,7 +542,18 @@ func handlePermissionRespond(w http.ResponseWriter, r *http.Request) {
 	if body.Message != "" {
 		req["message"] = body.Message
 	}
-	if _, err := client.Call(req, "permission:resolved", 15*time.Second); err != nil {
+	// A request that is still open resolves at once. For one that has expired the
+	// daemon logs a debug line and sends nothing, so every extra second here is spent
+	// waiting for an answer that is never coming. It holds a request for
+	// Math.min(timeout, 500) ms, so expired is the normal case from a phone.
+	if _, err := client.Call(req, "permission:resolved", 3*time.Second); err != nil {
+		var te timeoutError
+		if errors.As(err, &te) {
+			writeJSON(w, 409, map[string]any{
+				"error": "that request had already expired: Xirp holds a permission request for about half a second before the agent's own dialog takes over",
+			})
+			return
+		}
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
 		return
 	}

@@ -42,7 +42,7 @@ cookie from `POST /api/auth`. In open mode no credential is needed.
 | GET | `/healthz` | Liveness. No auth. |
 | POST | `/api/auth` | `{key}` → sets cookie. |
 | GET | `/api/sessions` | Projected session list. |
-| GET | `/api/sessions/{id}?limit=N` | Session plus transcript. |
+| GET | `/api/sessions/{id}?limit=N` | Session plus transcript. `transcript=0` returns the session alone, which is what the terminal view polls: parsing a transcript spawns a `node` process for something that view does not draw. |
 | POST | `/api/sessions/{id}/message` | `{text}` → drives the agent. |
 | POST | `/api/sessions/{id}/stop` | Stop the session. |
 | GET | `/api/permissions` | Live permission requests (see the caveat in [`protocol.md`](protocol.md#why-there-is-no-remote-approval-of-permission-prompts)). |
@@ -71,11 +71,13 @@ cookie from `POST /api/auth`. In open mode no credential is needed.
 | GET | `/api/restorable` | Sessions left needing a restore-or-dismiss decision. |
 | POST | `/api/restore` | `{restore: [], dismiss: []}`. |
 | POST | `/api/sessions/{id}/rename` | `{name}` or `{regenerate: true}`. |
-| GET | `/api/sessions/{id}/file?path=` | One file from the session's checkout. |
+| GET | `/api/sessions/{id}/file?path=` | One file from the session's checkout. `files:stat` runs first, so the answer names a directory, a missing path or a file over 5 MB instead of reading it. |
+| GET | `/api/prompts` | The saved prompts kept in Xirp's own settings. |
+| POST | `/api/prompts` | `{name, prompt}` adds, `{id, name, prompt}` replaces, `{delete: id}` removes. |
 
-## Four traps in the daemon's API worth knowing
+## Traps in the daemon's API worth knowing
 
-All four cost real debugging time and none is visible from the message catalogue:
+All of these cost real debugging time and none is visible from the message catalogue:
 
 1. **`agents:list` replies under the key `harnesses`, not `agents`.** Reading the
    obvious key returns an empty list with no error, so the create form silently
@@ -96,3 +98,29 @@ All four cost real debugging time and none is visible from the message catalogue
    started — it returned 0 results in 4ms instead of 36 in 3s. `CallStream` instead
    waits until every source seen so far is done and the wire has been idle briefly,
    so a new upstream source cannot silently truncate results.
+5. **A typed error frame is not in the catalogue.** `api:describe` reports
+   `responseTypes: ["git:status","git:error"]` for `git:status` and `["git:log","git:error"]`
+   for `git:log`, and no `git:error` at all for `git:fileDiff`, `git:branchDiff` or
+   `git:branchFileDiff`. In the source every one of them routes through
+   `resolveGitCwdOrSendError`, which answers `git:error` with `code:"DIRECTORY_MISSING"`
+   when the worktree directory is gone. Trusting the catalogue means the call waits out
+   its timeout: 75 seconds for this app's changes screen, which makes three of them.
+   `git:branchPR` is the only git request here that cannot answer it.
+6. **`files:read` reports failure inside the success frame.** It answers
+   `{type:"files:read", path, error}` with no `content`, so a client that treats the
+   frame as a success renders a missing file as an empty one. `files:stat`, added in
+   0.20.1, is the cheap way to tell "missing" from "a directory" from "too big to read".
+7. **`session:agent-swapped` carries no session object**, only `sessionId`, `from` and
+   `to`. The daemon broadcasts `session:updated` with the row immediately before it, but
+   a call that waits for one type discards the other, so the row has to be read back.
+8. **The daemon answers an expired permission request with silence.** For a request it
+   no longer holds, `permission:respond` writes a debug line and sends nothing at all.
+   A request lives for about 500 ms, so that is the normal case from a phone: the call
+   gives up in 3 seconds and says the request expired rather than reporting a timeout.
+9. **A saved prompt has exactly six allowed keys and one timestamp format.** `id`,
+   `name`, `prompt`, `projectId`, `createdAt`, `updatedAt`, nothing else, with the times
+   matching JavaScript's `toISOString()` byte for byte. Go's `time.RFC3339Nano` is
+   refused because it prints nanoseconds. The daemon rejects the whole write with the
+   single word `validation`, which names neither the field nor the reason, and it refuses
+   every write while the stored list holds an entry it considers invalid. Such a list
+   reads back from `chirp:savedPrompts:get` as an empty one.
