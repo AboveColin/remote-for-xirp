@@ -2,10 +2,11 @@
 
 The daemon listens on `127.0.0.1` only and authenticates with a token passed as a
 query parameter (`ws://127.0.0.1:<port>/?token=<token>`). Its protocol is a typed
-WebSocket API with 212 message types, self-describing through `api:list` and
-`api:describe` — worth using if you extend this.
+WebSocket API with 223 message types, self-describing through `api:list` and
+`api:describe`, which is worth using if you extend this. The count is what `api:list`
+returns on Xirp 0.22.0 with every module of the app edition active.
 
-Two facts shape the implementation (four more traps are in [`api.md`](api.md#four-traps-in-the-daemons-api-worth-knowing)):
+Three facts shape the implementation (more traps are in [`api.md`](api.md#traps-in-the-daemons-api-worth-knowing)):
 
 1. **Neither the port nor the token is stable.** The token is minted on each app
    launch and injected into the environment of the app's own processes; it is not
@@ -18,6 +19,17 @@ Two facts shape the implementation (four more traps are in [`api.md`](api.md#fou
 2. **Replies are matched by `type`, not by a request id.** Requests are therefore
    serialized under a mutex, each waiting for the one response type it expects.
    One in-flight call is far above what a phone UI generates.
+
+3. **Failures arrive in three shapes, and two of them are easy to miss.** A rejected
+   request answers `{type:"error", originalType:<request>}`. A git request whose
+   worktree directory is gone answers `git:error` instead, and a failed
+   `session:swap-agent` answers `session:swap-agent:error`, both carrying a `code` and
+   sometimes a `hint` written for the person reading it. A client that waits only for
+   the success type waits out its whole timeout and then reports the wrong reason: this
+   one waited 75 seconds on the changes screen before those types were named. Some
+   module handlers report a third way, inside the success frame: `files:read` answers
+   its own type with an `error` field and no content. `Client.Call` takes the error
+   types per call for that reason, and the file read checks the field.
 
 Transcripts do not come from the daemon. `messages:list` reads the daemon's own
 database, which is empty for harness-driven sessions; the canonical reader is
