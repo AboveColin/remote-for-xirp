@@ -8,7 +8,8 @@ Facts worth having straight, because they are the ones most often guessed wrong:
 
 - The host must be macOS. This is not a portability gap: the daemon's auth token exists only in the Xirp app's process environment, readable by the same user and nobody else.
 - Xirp itself, from Spotify, has to be installed and running. This does not replace it: when the app is quit there is no daemon and nothing to control.
-- It reaches 33 of the daemon's 212 message types. Git writes, terminal attach, session deletion and settings changes are deliberately absent.
+- It reaches 36 of the daemon's 223 message types. Git writes, terminal attach, session deletion and settings changes are deliberately absent.
+- The saved prompts you keep in Xirp on the desktop are readable and writable from the phone: tapping one fills the composer, unsent.
 - Remote approval of permission prompts does not exist. The daemon holds a request open for roughly half a second before falling through to the agent's own dialog, which no polling client can catch.
 - Installing does not start anything. `install.sh` places a binary and stops; `xirp-remote install` is the separate, explicit step that starts the service and prints the QR code.
 

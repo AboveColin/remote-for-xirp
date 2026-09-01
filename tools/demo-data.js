@@ -34,7 +34,7 @@
       branch: 'fix/auth-flake',
       status: 'running',
       currentAgent: 'claude',
-      lastUserMessage: 'The retry helper is swallowing the timeout — look at the fixture first.',
+      lastUserMessage: 'The retry helper is swallowing the timeout, so look at the fixture first.',
       contextTokens: 210000,
       contextWindowSize: 1000000,
       totalCostUsd: 0.42,
@@ -160,8 +160,30 @@ index 3f1c2ab..9d4e77c 100644
 +        raise TokenExpired(claims.sub)
      return claims`;
 
+  // What the app can offer depends on the daemon's active modules, so the stub has to
+  // report them: without `saved-prompts` the composer hides its prompts button.
+  const prompts = [
+    {
+      id: '0c9f7b26-1d4a-4c3b-9f21-8ab0c5e41f77',
+      name: 'Review before merge',
+      prompt:
+        'Read the diff against the base branch. List anything that changes behaviour without a test, then stop and wait.',
+      createdAt: '2026-08-24T09:12:00.000Z',
+      updatedAt: '2026-08-24T09:12:00.000Z',
+    },
+    {
+      id: '4b1d8e50-77aa-4a11-8c62-2f0e9d3b6a15',
+      name: 'Reproduce first',
+      prompt:
+        'Write the failing test that shows the bug, run it, paste the output, and only then change any source file.',
+      createdAt: '2026-08-19T18:40:00.000Z',
+      updatedAt: '2026-08-19T18:40:00.000Z',
+    },
+  ];
+
   const routes = [
-    [/^\/api\/sessions$/, () => ({ sessions, modules: ['session-search'] })],
+    [/^\/api\/sessions$/, () => ({ sessions, modules: ['session-search', 'saved-prompts'] })],
+    [/^\/api\/prompts$/, () => ({ prompts })],
     [
       /^\/api\/sessions\/([^/?]+)\?/,
       (id) => ({
@@ -203,12 +225,15 @@ index 3f1c2ab..9d4e77c 100644
   };
 
   // The header shows the machine you are pointed at, which is a real hostname. The
-  // screenshots need a made-up one.
-  const hosts = JSON.parse(localStorage.getItem('xr.hosts') || '[]');
-  if (hosts[0]) {
-    hosts[0].name = 'studio mac';
-    localStorage.setItem('xr.hosts', JSON.stringify(hosts));
-  }
+  // screenshots need a made-up one. This renames the app's own first entry, the machine
+  // serving the page, rather than the stored list: the stored list holds only the extra
+  // machines, so writing to it added a second card instead of renaming the one there.
+  if (typeof hosts !== 'undefined' && hosts[0]) hosts[0].name = 'studio mac';
+
+  // The machines card does not go through api(): it reads /healthz and /api/sessions
+  // with fetch, so without these two the card reports this machine's real counts.
+  window.probeMachine = async () => ({ online: true, ms: 24 });
+  window.machineSummary = async () => ({ total: 5, running: 5, projects: 3 });
 
   window.__demoHost = 'xirp.local:8790';
   const scrub = (root) => {
@@ -275,10 +300,15 @@ index 3f1c2ab..9d4e77c 100644
       await refreshChanges();
     } else if (view === 'diff') {
       await openDiff('d1', 'app/auth/tokens.py', 'branch');
+    } else if (view === 'prompts') {
+      openSession('d1');
+      await wait(900);
+      el('detail-sub').textContent = 'webapp · fix/auth-flake';
+      await openPrompts();
     }
     await wait(400);
     return { view: state.view };
   };
 
-  return 'demo data loaded — call shot("machines" | "projects" | "sessions" | "chat" | "changes" | "diff")';
+  return 'demo data loaded. call shot("machines" | "projects" | "sessions" | "chat" | "changes" | "diff" | "prompts")';
 })();

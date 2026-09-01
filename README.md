@@ -62,9 +62,10 @@ Building from source, every CLI subcommand, and pinning which address it serves 
 | **Chat, full transcript, or the real tmux pane** | The pane is the session's actual one, ANSI colours and all, so slash commands, model pickers and permission prompts work without this app knowing they exist. A key row supplies Escape, Tab, arrows, Enter and Ctrl-C. |
 | **Answer a session** | Enter sends, Shift+Enter inserts a newline. **Submit** types and presses Enter so the agent acts; **Type** leaves the text in its input unsent. |
 | **Review the diff** | What a session changed, uncommitted and against its base branch, per-file counts, the rendered unified diff, the whole file when the diff is not enough, and a link to the branch's pull request when the daemon knows of one. |
-| **Notifications** | Web Push when a session finishes, fails, or wants an answer — it arrives with the app closed. Tapping it opens that session. |
+| **Notifications** | Web Push when an agent finishes a turn, a session ends, one fails, or one wants an answer, and it arrives with the app closed. Tapping it opens that session. "Finished a turn" is the daemon's `finished` status, which it sets only when nobody is at the desk, so it is the one that matters here. |
 | **Start, fork, hand over** | Create a session with a project, agent, model and goal, optionally on a new branch; fork a conversation when the agent went down a wrong path; hand a session to a different agent, keeping its history. |
 | **Search every session** | Metadata, messages and JSONL transcripts, including completed sessions the list no longer shows. |
+| **Saved prompts** | The prompts you keep in Xirp on the desktop, listed on the phone. Tap one to drop it into the composer, unsent; save what you typed as a new one. |
 | **See the state of the work** | Branch with staged, modified and untracked counts, recent commits, and any URLs the agent printed as tappable links — loopback addresses filtered out, since they would not resolve on a phone. |
 | **Restore and rename** | Revive or dismiss sessions after Xirp restarts, and rename one by hand or by asking the agent to retitle it from the conversation. |
 | **Installable** | A PWA that lives on the home screen and opens full-screen. An Android APK can be built for your own origin — see [`deploy/android/`](deploy/android/), which also explains why one cannot be published for everyone. |
@@ -84,7 +85,7 @@ that can only return nothing.
   The terminal view answers the agent's prompt directly instead. Detail:
   [`docs/protocol.md`](docs/protocol.md#why-there-is-no-remote-approval-of-permission-prompts).
 - **Write to git, attach a terminal, delete a session, or change any app setting.**
-  33 of the daemon's 212 message types are reachable; `git:` writes, `terminal:`,
+  36 of the daemon's 223 message types are reachable; `git:` writes, `terminal:`,
   `session:delete` and every `settings:` mutation are simply not proxied. The one
   `settings:` call is `getModels`, which reads the model list for the new-session sheet.
 - **Run anywhere but macOS**, for the reason in Requirements.
@@ -111,7 +112,7 @@ Full threat model and how to report something: [`SECURITY.md`](SECURITY.md).
 |---|---|
 | [`docs/service.md`](docs/service.md) | CLI reference, building from source, choosing an address, how the launchd agent works. |
 | [`docs/api.md`](docs/api.md) | Configuration, notifications, and the HTTP endpoints this serves. |
-| [`docs/protocol.md`](docs/protocol.md) | How it talks to the Xirp daemon, and four traps in that API that cost real debugging time. |
+| [`docs/protocol.md`](docs/protocol.md) | How it talks to the Xirp daemon, and the traps in that API that cost real debugging time. |
 | [`docs/proxy.md`](docs/proxy.md) | Putting it behind a reverse proxy, including the case where the Mac is a laptop that moves. |
 
 ## License

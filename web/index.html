@@ -15,6 +15,71 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
+    <!-- Icon sprite.
+         The header buttons used to be text glyphs (‹ + ↻ ⚙ ± ⑂ ✓ ■ ⤢ × ⌗), which land at
+         a different weight, size and baseline on every platform, and two of them (± for
+         changes, ⑂ for fork) nobody reads as what they mean. These are drawn once here
+         and referenced with <use>, so they inherit currentColor and the theme. -->
+    <svg class="sprite" aria-hidden="true" focusable="false" width="0" height="0">
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 6 9 12l6 6" /></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24">
+        <path d="M20.5 12a8.5 8.5 0 1 1-2.9-6.4" /><path d="M20.5 4v5h-5" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path d="M4 7h16M4 12h16M4 17h16" />
+        <circle cx="9" cy="7" r="2.1" /><circle cx="15" cy="12" r="2.1" /><circle cx="9" cy="17" r="2.1" />
+      </symbol>
+      <symbol id="i-diff" viewBox="0 0 24 24">
+        <path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7z" /><path d="M14 3v4h4" />
+        <path d="M10 11h4M12 9v4M10 17h4" />
+      </symbol>
+      <symbol id="i-fork" viewBox="0 0 24 24">
+        <circle cx="7" cy="5.5" r="2.5" /><circle cx="7" cy="18.5" r="2.5" /><circle cx="17" cy="8" r="2.5" />
+        <path d="M7 8v8M14.6 9.4c-1.2 2-3.4 2.6-5.6 2.6H7" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" /></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24">
+        <!-- Filled by attribute, not by a class: a <use> reference lives in a shadow
+             tree that document rules cannot select into. -->
+        <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none" />
+      </symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17" /></symbol>
+      <symbol id="i-scan" viewBox="0 0 24 24">
+        <path d="M4 9V6a2 2 0 0 1 2-2h3M15 4h3a2 2 0 0 1 2 2v3M20 15v3a2 2 0 0 1-2 2h-3M9 20H6a2 2 0 0 1-2-2v-3" />
+        <path d="M8 12h8" />
+      </symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24">
+        <path d="M9 4H5a1 1 0 0 0-1 1v4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M4 15v4a1 1 0 0 0 1 1h4" />
+      </symbol>
+      <symbol id="i-prompt" viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1z" /></symbol>
+      <symbol id="i-enter" viewBox="0 0 24 24"><path d="M9 10l-4 4 4 4" /><path d="M5 14h9a4 4 0 0 0 4-4V6" /></symbol>
+      <symbol id="i-keyboard" viewBox="0 0 24 24">
+        <rect x="3" y="7" width="18" height="11" rx="2" /><path d="M7 11h.01M11 11h.01M15 11h.01M17 11h.01M8 15h8" />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5 21 21" /></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24">
+        <path d="M10.5 13.5a4.5 4.5 0 0 0 6.4 0l2-2a4.5 4.5 0 0 0-6.4-6.4l-1 1" />
+        <path d="M13.5 10.5a4.5 4.5 0 0 0-6.4 0l-2 2a4.5 4.5 0 0 0 6.4 6.4l1-1" />
+      </symbol>
+      <symbol id="i-commit" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5" /><path d="M12 4v4.5M12 15.5V20" /></symbol>
+      <symbol id="i-machine" viewBox="0 0 24 24">
+        <rect x="3" y="5" width="18" height="11" rx="2" /><path d="M2 19.5h20" />
+      </symbol>
+      <symbol id="i-jump" viewBox="0 0 24 24"><path d="M12 5v13M6 13l6 6 6-6" /></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path d="M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+      </symbol>
+      <symbol id="i-inbox" viewBox="0 0 24 24">
+        <path d="M4 13h4l2 3h4l2-3h4" /><path d="M4 13l2-7h12l2 7v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+      </symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z" /><path d="M12 10v4M12 17h.01" /></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 9l3 3-3 3M13 15h4" />
+      </symbol>
+    </svg>
+
     <!-- Login gate. Shown until /api/sessions answers 200. -->
     <section id="login" class="gate" hidden>
       <div class="gate-card">
@@ -46,7 +111,7 @@
           Xirp to get started.
         </p>
 
-        <button id="welcome-scan" class="btn btn-accent btn-big">Scan QR code</button>
+        <button id="welcome-scan" class="btn btn-accent btn-big"><svg class="ico"><use href="#i-scan" /></svg>Scan QR code</button>
         <button id="welcome-here" class="btn btn-big">Use this machine</button>
         <button id="welcome-manual" class="linkish">Enter details manually</button>
 
@@ -62,13 +127,13 @@
     <section id="machines-view" hidden>
       <header class="topbar">
         <div class="brand"><span class="brand-dot"></span>Machines</div>
-        <button id="machines-settings" class="icon-btn" aria-label="Settings">⚙</button>
+        <button id="machines-settings" class="icon-btn" aria-label="Settings"><svg class="ico"><use href="#i-settings" /></svg></button>
       </header>
       <div id="restore-banner" class="approvals" hidden></div>
       <div id="machine-stats" class="stats"></div>
       <div id="machines" class="machines"></div>
       <button id="add-machine" class="add-machine">
-        <span class="add-glyph">⌗</span>
+        <span class="add-glyph"><svg class="ico"><use href="#i-scan" /></svg></span>
         <span>
           <strong>Add a machine</strong>
           <em class="subdued">Scan a pairing code</em>
@@ -80,14 +145,15 @@
     <!-- Folders: the projects on one machine. -->
     <section id="projects-view" hidden>
       <header class="topbar">
-        <button id="projects-back" class="icon-btn" aria-label="Back">‹</button>
+        <button id="projects-back" class="icon-btn" aria-label="Back"><svg class="ico"><use href="#i-back" /></svg></button>
         <div class="detail-title">
           <span id="projects-title">Projects</span>
           <span id="projects-sub" class="subdued"></span>
         </div>
-        <button id="projects-new" class="icon-btn accent" aria-label="New session">+</button>
+        <button id="projects-new" class="icon-btn accent" aria-label="New session"><svg class="ico"><use href="#i-plus" /></svg></button>
       </header>
       <div class="searchbar">
+        <svg class="ico ico-sm searchbar-ico"><use href="#i-search" /></svg>
         <input id="search" type="search" placeholder="Search all sessions…" aria-label="Search sessions" autocomplete="off" />
       </div>
       <nav class="filters" id="filters">
@@ -96,14 +162,18 @@
       </nav>
       <div id="approvals" class="approvals" hidden></div>
       <div id="folders" class="folders"></div>
-      <p id="list-empty" class="empty subdued" hidden>No sessions.</p>
+      <div id="list-empty" class="blank" hidden>
+        <svg class="blank-mark"><use href="#i-inbox" /></svg>
+        <strong id="list-empty-title">Nothing running here</strong>
+        <span class="subdued" id="list-empty-hint"></span>
+      </div>
       <footer class="foot subdued" id="list-foot"></footer>
     </section>
 
     <!-- Camera scanner. Uses the platform barcode detector when present. -->
     <section id="scan-view" hidden>
       <header class="topbar">
-        <button id="scan-close" class="icon-btn" aria-label="Back">‹</button>
+        <button id="scan-close" class="icon-btn" aria-label="Back"><svg class="ico"><use href="#i-back" /></svg></button>
         <div class="brand">Scan QR code</div>
       </header>
       <div class="scan">
@@ -118,7 +188,7 @@
          browser has no barcode detector. -->
     <section id="manual-view" hidden>
       <header class="topbar">
-        <button id="manual-back" class="icon-btn" aria-label="Back">‹</button>
+        <button id="manual-back" class="icon-btn" aria-label="Back"><svg class="ico"><use href="#i-back" /></svg></button>
         <div class="brand">Add machine</div>
       </header>
       <form id="manual-form" class="manual">
@@ -136,33 +206,65 @@
     <!-- Session list -->
     <section id="list-view" hidden>
       <header class="topbar">
-        <button id="sessions-back" class="icon-btn" aria-label="Back">‹</button>
+        <button id="sessions-back" class="icon-btn" aria-label="Back"><svg class="ico"><use href="#i-back" /></svg></button>
         <div class="detail-title">
           <span id="sessions-title">Sessions</span>
           <span id="sessions-sub" class="subdued"></span>
         </div>
-        <button id="new-session" class="icon-btn accent" aria-label="New session">+</button>
-        <button id="refresh" class="icon-btn" aria-label="Refresh">↻</button>
+        <button id="new-session" class="icon-btn accent" aria-label="New session"><svg class="ico"><use href="#i-plus" /></svg></button>
+        <button id="refresh" class="icon-btn" aria-label="Refresh"><svg class="ico"><use href="#i-refresh" /></svg></button>
       </header>
 
       <div id="sessions" class="sessions"></div>
-      <p id="sessions-empty" class="empty subdued" hidden>No sessions here.</p>
+      <div id="sessions-empty" class="blank" hidden>
+        <svg class="blank-mark"><use href="#i-folder" /></svg>
+        <strong>No sessions in this project</strong>
+        <span class="subdued">Start one with +.</span>
+      </div>
       <footer class="foot subdued" id="sessions-foot"></footer>
     </section>
 
     <!-- Session detail -->
     <section id="detail-view" hidden>
       <header class="topbar">
-        <button id="back" class="icon-btn" aria-label="Back">‹</button>
+        <button id="back" class="icon-btn" aria-label="Back"><svg class="ico"><use href="#i-back" /></svg></button>
         <div class="detail-title">
           <span id="detail-name">Session</span>
           <span id="detail-sub" class="subdued"></span>
         </div>
-        <button id="open-changes" class="icon-btn" aria-label="Changes">±</button>
-        <button id="open-handover" class="icon-btn" aria-label="Fork or hand over">⑂</button>
-        <button id="ack" class="icon-btn" aria-label="Acknowledge" hidden>✓</button>
-        <button id="stop" class="icon-btn danger" aria-label="Stop session">■</button>
+        <button id="open-changes" class="icon-btn" aria-label="Changes"><svg class="ico"><use href="#i-diff" /></svg></button>
+        <button id="open-handover" class="icon-btn" aria-label="Fork or hand over"><svg class="ico"><use href="#i-fork" /></svg></button>
+        <button id="ack" class="icon-btn" aria-label="Acknowledge" hidden><svg class="ico"><use href="#i-check" /></svg></button>
+        <button id="stop" class="icon-btn danger" aria-label="Stop session"><svg class="ico"><use href="#i-stop" /></svg></button>
       </header>
+
+      <!-- One card for the state of the session: what it is doing, how much of its
+           context window is gone, what it has cost, which branch it is on and what it
+           has produced. These were five separate blocks stacked above the transcript,
+           which spent the whole first screen of a phone on chrome. The context ring is
+           here because "84% of 200k" decides whether to keep going or start fresh, and
+           a number in a grey line does not carry that. -->
+      <section class="scard" id="session-card">
+        <div class="scard-main">
+          <div class="scard-facts">
+            <div id="detail-meta" class="meta"></div>
+            <div id="detail-git" class="meta scard-git" hidden></div>
+          </div>
+          <div class="ring" id="ctx-ring" hidden>
+            <svg viewBox="0 0 44 44" aria-hidden="true">
+              <circle class="ring-track" cx="22" cy="22" r="18" />
+              <circle class="ring-arc" id="ctx-arc" cx="22" cy="22" r="18" />
+            </svg>
+            <span class="ring-label" id="ctx-label"></span>
+            <span class="ring-cap">ctx</span>
+          </div>
+        </div>
+        <div id="detail-urls" class="urls" hidden></div>
+        <details id="detail-commits" class="commits" hidden>
+          <summary><svg class="ico ico-sm sum-chev"><use href="#i-chevron" /></svg>Recent commits</summary>
+          <div id="commits-body"></div>
+        </details>
+      </section>
 
       <!-- Which view of the session you want is a per-session decision made many times
            an hour, so it lives here rather than only in Settings. Both write the same
@@ -173,19 +275,13 @@
         <button data-value="terminal">Terminal</button>
       </div>
 
-      <div id="detail-meta" class="meta"></div>
       <!-- Shown when a session has no tmux pane: the terminal would be empty and
            anything typed at it is accepted and dropped. -->
       <div id="nopane-note" class="nopane-note" hidden>
-        This session has no terminal pane, so the terminal is empty and anything sent to
-        it is dropped. Stop it, or restart it from the desktop.
+        <svg class="ico ico-sm"><use href="#i-alert" /></svg>
+        <span>This session has no terminal pane, so the terminal is empty and anything
+        sent to it is dropped. Stop it, or restart it from the desktop.</span>
       </div>
-      <div id="detail-git" class="meta" hidden></div>
-      <div id="detail-urls" class="urls" hidden></div>
-      <details id="detail-commits" class="commits" hidden>
-        <summary>Recent commits</summary>
-        <div id="commits-body"></div>
-      </details>
       <div id="transcript" class="transcript"></div>
 
       <!-- 1:1 view of the session's tmux pane. Whatever the agent's TUI is drawing
@@ -204,7 +300,9 @@
         </div>
       </div>
 
-      <button id="jump-latest" class="jump" hidden aria-label="Jump to latest">↓ Latest</button>
+      <button id="jump-latest" class="jump" hidden aria-label="Jump to latest">
+        <svg class="ico ico-sm"><use href="#i-jump" /></svg>Latest
+      </button>
 
       <form id="composer" class="composer">
         <button
@@ -213,11 +311,15 @@
           class="mode-btn"
           aria-label="Send mode"
           title="Submit: send and run. Type: leave it in the agent's input."
-        >⏎</button>
+        ><svg class="ico"><use id="send-mode-icon" href="#i-enter" /></svg></button>
+        <!-- Hidden until the daemon reports the saved-prompts module. -->
+        <button type="button" id="prompt-btn" class="mode-btn" aria-label="Saved prompts" hidden>
+          <svg class="ico"><use href="#i-prompt" /></svg>
+        </button>
         <textarea
           id="composer-text"
           rows="1"
-          placeholder="Message this session…"
+          placeholder="Message…"
           aria-label="Message"
           enterkeyhint="send"
         ></textarea>
@@ -228,7 +330,7 @@
     <!-- Settings -->
     <section id="settings-view" hidden>
       <header class="topbar">
-        <button id="settings-back" class="icon-btn" aria-label="Back">‹</button>
+        <button id="settings-back" class="icon-btn" aria-label="Back"><svg class="ico"><use href="#i-back" /></svg></button>
         <div class="brand">Settings</div>
       </header>
 
@@ -326,12 +428,12 @@
     <!-- Changes: what the session altered, uncommitted and against the base branch -->
     <section id="changes-view" hidden>
       <header class="topbar">
-        <button id="changes-back" class="icon-btn" aria-label="Back">‹</button>
+        <button id="changes-back" class="icon-btn" aria-label="Back"><svg class="ico"><use href="#i-back" /></svg></button>
         <div class="detail-title">
           <span id="changes-title">Changes</span>
           <span id="changes-sub" class="subdued"></span>
         </div>
-        <button id="changes-refresh" class="icon-btn" aria-label="Refresh">↻</button>
+        <button id="changes-refresh" class="icon-btn" aria-label="Refresh"><svg class="ico"><use href="#i-refresh" /></svg></button>
       </header>
       <div id="changes-pr" class="pr-card" hidden></div>
       <div id="changes-body" class="changes"></div>
@@ -341,8 +443,8 @@
     <!-- One file's diff -->
     <section id="diff-view" hidden>
       <header class="topbar">
-        <button id="diff-back" class="icon-btn" aria-label="Back">‹</button>
-        <button id="diff-whole" class="icon-btn" aria-label="View the whole file">⤢</button>
+        <button id="diff-back" class="icon-btn" aria-label="Back"><svg class="ico"><use href="#i-back" /></svg></button>
+        <button id="diff-whole" class="icon-btn" aria-label="View the whole file"><svg class="ico"><use href="#i-expand" /></svg></button>
         <div class="detail-title">
           <span id="diff-title">Diff</span>
           <span id="diff-sub" class="subdued"></span>
@@ -355,9 +457,9 @@
     <!-- Diagnostics -->
     <section id="diag-view" hidden>
       <header class="topbar">
-        <button id="diag-back" class="icon-btn" aria-label="Back">‹</button>
+        <button id="diag-back" class="icon-btn" aria-label="Back"><svg class="ico"><use href="#i-back" /></svg></button>
         <div class="brand">Diagnostics</div>
-        <button id="diag-refresh" class="icon-btn" aria-label="Refresh">↻</button>
+        <button id="diag-refresh" class="icon-btn" aria-label="Refresh"><svg class="ico"><use href="#i-refresh" /></svg></button>
       </header>
       <div id="diag-body" class="diag"></div>
       <h2 class="diag-h">Daemon log</h2>
@@ -375,7 +477,7 @@
       <div class="sheet-card">
         <header class="sheet-head">
           <strong>Session actions</strong>
-          <button id="handover-close" class="icon-btn" aria-label="Close">×</button>
+          <button id="handover-close" class="icon-btn" aria-label="Close"><svg class="ico"><use href="#i-close" /></svg></button>
         </header>
 
         <h3 class="sheet-h">Rename</h3>
@@ -409,7 +511,7 @@
       <div class="sheet-card">
         <header class="sheet-head">
           <strong>New session</strong>
-          <button id="create-close" class="icon-btn" aria-label="Close">×</button>
+          <button id="create-close" class="icon-btn" aria-label="Close"><svg class="ico"><use href="#i-close" /></svg></button>
         </header>
         <form id="create-form">
           <label for="create-project">Project</label>
@@ -435,6 +537,30 @@
           <button type="submit" id="create-submit" class="btn btn-accent">Create</button>
           <p id="create-error" class="error" hidden></p>
         </form>
+      </div>
+    </section>
+
+    <!-- Saved prompts, which Xirp added in 0.19.1. The list lives in its settings on
+         the desktop; this reads it and writes back. Writing replaces the whole list,
+         because that is the only call the daemon offers. -->
+    <section id="prompts-sheet" class="sheet" hidden>
+      <div class="sheet-card">
+        <header class="sheet-head">
+          <strong>Saved prompts</strong>
+          <button id="prompts-close" class="icon-btn" aria-label="Close"><svg class="ico"><use href="#i-close" /></svg></button>
+        </header>
+        <p class="subdued setting-hint">
+          Tap one to put it in the composer. Nothing reaches the agent until you send it.
+        </p>
+        <div id="prompts-list" class="prompts"></div>
+
+        <h3 class="sheet-h">Keep what you typed</h3>
+        <p class="subdued setting-hint">
+          Saves the composer text as a prompt in Xirp on this machine.
+        </p>
+        <input id="prompt-name" type="text" placeholder="Name it" maxlength="120" autocapitalize="sentences" />
+        <button id="prompt-save" class="btn">Save the composer text</button>
+        <p id="prompts-error" class="error" hidden></p>
       </div>
     </section>
 

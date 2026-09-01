@@ -11,9 +11,62 @@
 
 const LIST_POLL_MS = 5000;
 const DETAIL_POLL_MS = 4000;
-const ACTIVE_STATUSES = ['running', 'idle', 'waiting', 'starting'];
+
+// The daemon's own ACTIVE_SESSION_STATUSES, copied rather than guessed. The two that
+// were missing are the two that matter: `finished` is where a turn lands when nobody is
+// at the desk, which is when this app is in use, and `waiting_on_parent` is a child
+// session blocked on its parent. The Active filter hid both, and both drew an unstyled
+// pill. `starting` was in this list and is not a session status at all; it belongs to the
+// daemon's subagent states.
+const ACTIVE_STATUSES = ['running', 'waiting', 'waiting_on_parent', 'finished', 'idle'];
+
+// Only `running` can mean the agent is mid-turn. `finished` and `idle` are both turn
+// ends, so the working indicator must not read them as work in progress.
+const WORKING_STATUS = 'running';
+
+// Which statuses are worth your attention first, most urgent first. A session that
+// wants an answer outranks one that is working, because only one of them is blocked on
+// you.
+const STATUS_RANK = ['waiting', 'running', 'finished', 'waiting_on_parent', 'idle'];
+
+const STATUS_LABELS = { waiting_on_parent: 'waiting on parent' };
+const statusLabel = (s) => STATUS_LABELS[s] || s || '?';
 
 const el = (id) => document.getElementById(id);
+
+// Icons live in the sprite at the top of index.html. Nodes built here reference it the
+// same way the markup does, so there is one drawing of each.
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function icon(name, cls = 'ico') {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', cls);
+  const use = document.createElementNS(SVG_NS, 'use');
+  use.setAttribute('href', `#i-${name}`);
+  svg.append(use);
+  return svg;
+}
+
+// A blank column while the first request is in flight reads as "there is nothing here",
+// and the word "Loading…" reads as something that may never finish. Rows in the shape of
+// the real content say neither, and they stop the layout jumping when the answer
+// lands.
+function skeletonLine(width, cls = '') {
+  const line = document.createElement('div');
+  line.className = `sk ${cls}`.trim();
+  line.style.width = width;
+  return line;
+}
+
+function skeletonCards(n, widths = ['58%', '34%', '78%']) {
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < n; i++) {
+    const card = document.createElement('div');
+    card.className = 'card sk-card';
+    for (const w of widths) card.append(skeletonLine(w));
+    frag.append(card);
+  }
+  return frag;
+}
 const views = {
   login: el('login'),
   welcome: el('welcome'),
@@ -127,6 +180,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
 
 let state = {
   view: 'login',
+  loaded: false,
   filter: settings.filter,
   sessions: [],
   sessionId: null,
@@ -226,9 +280,19 @@ function compact(n) {
   return `${(n / 1e6).toFixed(1)}M`;
 }
 
+// Every status the daemon can set, so none of them arrives as an unstyled pill.
 function statusClass(s) {
-  const known = ['running', 'idle', 'completed', 'waiting', 'failed', 'stopped'];
-  return known.includes(s) ? `pill-${s}` : '';
+  const known = [
+    'running',
+    'waiting',
+    'waiting_on_parent',
+    'finished',
+    'idle',
+    'paused',
+    'completed',
+    'failed',
+  ];
+  return known.includes(s) ? `pill-${s.replace(/_/g, '-')}` : '';
 }
 
 function pct(session) {
@@ -236,6 +300,53 @@ function pct(session) {
   const size = session.contextWindowSize;
   if (!used || !size) return null;
   return Math.round((used / size) * 100);
+}
+
+// How full the context window is decides whether to keep going or start a fresh
+// session, and it was a number in a grey line of six other numbers. Amber from 60%
+// because a session that long is worth watching before it is urgent; red from 85%
+// because past that a harness compacts soon, and compaction is where detail goes.
+function contextTone(used) {
+  if (used >= 85) return 'hot';
+  if (used >= 60) return 'warm';
+  return 'ok';
+}
+
+function contextMeter(used) {
+  const meter = document.createElement('div');
+  meter.className = 'meter';
+  meter.dataset.tone = contextTone(used);
+  const track = document.createElement('div');
+  track.className = 'meter-track';
+  const fill = document.createElement('i');
+  fill.style.width = `${Math.min(100, used)}%`;
+  track.append(fill);
+  const num = document.createElement('span');
+  num.className = 'meter-num';
+  num.textContent = `${used}%`;
+  meter.append(track, num);
+  meter.title = `${used}% of the context window used`;
+  return meter;
+}
+
+// The ring on the session screen. The markup sets r=18, so this hard-codes the
+// circumference rather than measuring it.
+const RING_LENGTH = 2 * Math.PI * 18;
+
+function paintRing(s) {
+  const ring = el('ctx-ring');
+  const used = pct(s);
+  if (used === null) {
+    ring.hidden = true;
+    return;
+  }
+  const arc = el('ctx-arc');
+  arc.style.strokeDasharray = String(RING_LENGTH);
+  arc.style.strokeDashoffset = String(RING_LENGTH * (1 - Math.min(100, used) / 100));
+  ring.dataset.tone = contextTone(used);
+  el('ctx-label').textContent = `${used}%`;
+  ring.title = `${s.contextTokens.toLocaleString()} of ${s.contextWindowSize.toLocaleString()} context tokens used`;
+  ring.hidden = false;
 }
 
 // ---- login ----
@@ -999,7 +1110,7 @@ function machineCard(m) {
   name.className = 'machine-name';
   const chev = document.createElement('span');
   chev.className = 'machine-chev';
-  chev.textContent = '›';
+  chev.append(icon('chevron', 'ico ico-sm'));
   head.append(dot, name, chev);
 
   const sub = document.createElement('div');
@@ -1112,6 +1223,12 @@ el('folders').addEventListener('click', (e) => {
 
 function renderFolders() {
   const box = el('folders');
+  if (!state.loaded && !state.sessions.length) {
+    box.replaceChildren(skeletonCards(3, ['46%', '30%']));
+    el('list-empty').hidden = true;
+    el('list-foot').textContent = '';
+    return;
+  }
   const shown =
     state.filter === 'active'
       ? state.sessions.filter((s) => ACTIVE_STATUSES.includes(s.status))
@@ -1146,22 +1263,34 @@ function renderFolders() {
     const meta = document.createElement('em');
     meta.className = 'subdued';
     const running = list.filter((s) => s.status === 'running').length;
+    const asking = list.filter((s) => s.status === 'waiting').length;
     const branches = new Set(list.map((s) => s.branch).filter(Boolean));
     const parts = [`${list.length} ${list.length === 1 ? 'session' : 'sessions'}`];
     if (running) parts.push(`${running} running`);
+    // The one count worth putting before the branch count: it is the reason to open
+    // this folder now rather than later.
+    if (asking) parts.push(`${asking} waiting on you`);
     if (branches.size > 1) parts.push(`${branches.size} branches`);
     meta.textContent = parts.join(' · ');
+    if (asking) row.classList.add('is-asking');
     text.append(nm, meta);
 
     const chev = document.createElement('span');
     chev.className = 'folder-chev';
-    chev.textContent = '›';
+    chev.append(icon('chevron', 'ico ico-sm'));
 
     row.append(swatch, text, chev);
     box.append(row);
   }
 
   el('list-empty').hidden = ordered.length > 0;
+  // What to do about it depends on which filter is on: telling someone to switch to All
+  // while they are looking at All is worse than saying nothing.
+  const active = state.filter === 'active';
+  el('list-empty-title').textContent = active ? 'Nothing running here' : 'No sessions here';
+  el('list-empty-hint').textContent = active
+    ? 'Start one with +, or switch to All to see the sessions that have finished.'
+    : 'Start one with +.';
   el('list-foot').textContent = state.lastError
     ? state.lastError
     : `${shown.length} of ${state.sessions.length} sessions · ${ordered.length} projects`;
@@ -1212,7 +1341,7 @@ function sessionCard(s) {
   const pill = document.createElement('span');
   const noPane = s.hasPane === false && ACTIVE_STATUSES.includes(s.status);
   pill.className = `pill ${noPane ? 'pill-nopane' : statusClass(s.status)}`;
-  pill.textContent = noPane ? 'no pane' : s.waitingReason ? 'waiting' : s.status;
+  pill.textContent = noPane ? 'no pane' : s.waitingReason ? 'waiting' : statusLabel(s.status);
   top.append(name, pill);
 
   const sub = document.createElement('div');
@@ -1220,8 +1349,6 @@ function sessionCard(s) {
   const bits = [];
   if (s.branch) bits.push(s.branch);
   if (s.currentAgent) bits.push(s.currentAgent);
-  const p = pct(s);
-  if (p !== null) bits.push(`${p}% ctx`);
   if (typeof s.totalCostUsd === 'number' && s.totalCostUsd > 0) bits.push(`$${s.totalCostUsd.toFixed(2)}`);
   if (s.lastActivityAt) bits.push(ago(s.lastActivityAt));
   bits.forEach((b, i) => {
@@ -1237,6 +1364,10 @@ function sessionCard(s) {
   });
 
   card.append(top, sub);
+  // Only while the session can still run. How much context a finished session burned is
+  // history, and a bar per card across twenty finished ones is noise.
+  const used = pct(s);
+  if (used !== null && ACTIVE_STATUSES.includes(s.status)) card.append(contextMeter(used));
   if (s.lastUserMessage) {
     const last = document.createElement('div');
     last.className = 'card-last';
@@ -1248,16 +1379,27 @@ function sessionCard(s) {
 
 function renderList() {
   const wrap = el('sessions');
+  if (!state.loaded && !state.sessions.length) {
+    wrap.replaceChildren(skeletonCards(3));
+    el('sessions-empty').hidden = true;
+    el('sessions-foot').textContent = '';
+    return;
+  }
   const all =
     state.filter === 'active'
       ? state.sessions.filter((s) => ACTIVE_STATUSES.includes(s.status))
       : state.sessions;
   const shown = all.filter((s) => (s.projectName || 'No project') === state.project);
 
+  // A session waiting for an answer comes first, because it is the only kind waiting on
+  // you. Then work in progress, then turns that have ended, newest activity first
+  // within each.
+  const rank = (s) => {
+    const i = STATUS_RANK.indexOf(s.status);
+    return i === -1 ? STATUS_RANK.length : i;
+  };
   shown.sort((a, b) => {
-    const ar = a.status === 'running' ? 0 : 1;
-    const br = b.status === 'running' ? 0 : 1;
-    if (ar !== br) return ar - br;
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
     return new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0);
   });
 
@@ -1274,13 +1416,8 @@ async function refreshList() {
   try {
     const body = await api('/api/sessions');
     state.sessions = body.sessions || [];
-    if (body.modules) {
-      state.modules = body.modules;
-      // Search is a module. Where the edition does not have it, the box can only ever
-      // return nothing, so it is removed rather than left to disappoint.
-      const searchable = state.modules.includes('session-search');
-      el('search').closest('.searchbar').hidden = !searchable;
-    }
+    state.loaded = true;
+    noteModules(body);
     state.lastError = null;
     setLink(true);
   } catch (e) {
@@ -1291,6 +1428,17 @@ async function refreshList() {
   if (state.view === 'projects') renderFolders();
   else if (state.view === 'list') renderList();
   refreshApprovals();
+}
+
+// Features that are modules rather than core. Where the edition lacks one, this removes
+// its control instead of leaving it to fail: a search box that can only return nothing,
+// or a prompts button over an endpoint that answers nothing, are both worse than no
+// button.
+function noteModules(body) {
+  if (!body || !body.modules) return;
+  state.modules = body.modules;
+  el('search').closest('.searchbar').hidden = !state.modules.includes('session-search');
+  el('prompt-btn').hidden = !state.modules.includes('saved-prompts');
 }
 
 // ---- search ----
@@ -1511,7 +1659,7 @@ async function refreshExtras(id) {
       a.href = u;
       a.target = '_blank';
       a.rel = 'noreferrer';
-      a.textContent = u.replace(/^https?:\/\//, '');
+      a.append(icon('link', 'ico ico-sm'), document.createTextNode(u.replace(/^https?:\/\//, '')));
       box.append(a);
     }
     box.hidden = usable.length === 0;
@@ -1724,11 +1872,25 @@ function openSession(id) {
   el('detail-urls').hidden = true;
   el('detail-commits').hidden = true;
   el('ack').hidden = true;
-  el('detail-name').textContent = 'Loading…';
+  el('ctx-ring').hidden = true;
+  el('detail-name').replaceChildren(skeletonLine('11ch', 'sk-title'));
+  // The card holds placeholder lines of its own, or it opens as an empty white strip
+  // that reads as a broken element rather than as one still loading.
+  const placeholder = document.createElement('div');
+  placeholder.className = 'scard-ph';
+  placeholder.append(skeletonLine('42%'), skeletonLine('66%'));
+  el('detail-meta').replaceChildren(placeholder);
+  // The previous session's project colour would otherwise sit on this one's card until
+  // the first answer lands.
+  el('session-card').style.removeProperty('--hue');
+  delete el('transcript').dataset.sig;
   el('detail-sub').textContent = '';
+  el('transcript').replaceChildren(skeletonCards(2, ['92%', '64%']));
   show('detail');
   setTerminalMode(settings.mode === 'terminal');
-  if (settings.mode === 'terminal') return;
+  // Terminal mode wants this too. Returning early here left the title reading
+  // "Loading…" until the first poll landed four seconds later.
+  //
   // Git state loads after the transcript rather than alongside it. Both travel
   // over the same serialised daemon connection, so issuing them together only
   // decides which one waits, and the transcript is what the screen is for.
@@ -1750,9 +1912,14 @@ el('back').addEventListener('click', () => {
 async function refreshDetail(scroll = false) {
   const id = state.sessionId;
   if (!id) return;
+  // The terminal view renders the tmux pane, so it asks for the session alone. Parsing
+  // a transcript spawns `node squab session-parse` on the Mac, measured at 0.07 s and
+  // 3.5 MB of JSON for a long session, and this poll runs every four seconds.
+  const terminal = settings.mode === 'terminal';
+  const query = terminal ? 'transcript=0' : `limit=${settings.limit}`;
   let body;
   try {
-    body = await api(`/api/sessions/${encodeURIComponent(id)}?limit=${settings.limit}`);
+    body = await api(`/api/sessions/${encodeURIComponent(id)}?${query}`);
     setLink(true);
   } catch (e) {
     if (e.message !== 'unauthorized') {
@@ -1764,6 +1931,8 @@ async function refreshDetail(scroll = false) {
   const s = body.session || {};
   el('detail-name').textContent = s.name || s.goal || id.slice(0, 8);
   el('detail-sub').textContent = [s.projectName, s.branch].filter(Boolean).join(' · ');
+  // The same hue the folder list gives this project, so the two screens agree.
+  el('session-card').style.setProperty('--hue', projectHue(s.projectName || ''));
 
   el('ack').hidden = !(s.status === 'completed' || s.status === 'failed');
 
@@ -1774,19 +1943,18 @@ async function refreshDetail(scroll = false) {
   el('composer').hidden = noPane;
 
   // Status leads and is the only coloured thing here; the rest is one grey line of
-  // reference facts, separated by the stylesheet rather than by more boxes.
+  // reference facts, separated by the stylesheet rather than by more boxes. The context
+  // number left this line for the ring beside it.
   const meta = el('detail-meta');
   meta.innerHTML = '';
   const status = document.createElement('span');
   status.className = `pill ${statusClass(s.status)}`;
-  status.textContent = s.waitingReason ? `waiting: ${s.waitingReason}` : s.status;
+  status.textContent = s.waitingReason ? `waiting: ${s.waitingReason}` : statusLabel(s.status);
   meta.append(status);
 
   const tags = [];
   if (s.currentAgent) tags.push(s.currentAgent);
   if (s.model) tags.push(s.model);
-  const p = pct(s);
-  if (p !== null) tags.push(`${p}% of ${Math.round(s.contextWindowSize / 1000)}k ctx`);
   if (typeof s.totalCostUsd === 'number' && s.totalCostUsd > 0) {
     tags.push(`$${s.totalCostUsd.toFixed(2)}`);
   }
@@ -1797,8 +1965,11 @@ async function refreshDetail(scroll = false) {
     tag.textContent = t;
     meta.append(tag);
   }
+  paintRing(s);
 
-  renderTranscript(body, s, scroll);
+  // The terminal view draws the pane, so the transcript is neither fetched nor built
+  // for it.
+  if (!terminal) renderTranscript(body, s, scroll);
 }
 
 // ---- transcript ----
@@ -1969,7 +2140,9 @@ function renderTranscript(body, s, forceScroll) {
   const tail = all.length ? all[all.length - 1] : null;
   const agentOwesReply =
     tail && !(tail.role === 'assistant' && (tail.type === 'message' || !tail.type));
-  if (ACTIVE_STATUSES.includes(s.status) && agentOwesReply && fresh) {
+  // `finished` and `idle` are turn ends, so they are active sessions that owe nothing.
+  // Before this list matched the daemon's, neither status reached this test.
+  if (s.status === WORKING_STATUS && agentOwesReply && fresh) {
     const typing = document.createElement('div');
     typing.className = 'typing';
     for (let i = 0; i < 3; i++) typing.append(document.createElement('span'));
@@ -2019,8 +2192,8 @@ async function refreshPane() {
 function setTerminalMode(on) {
   el('terminal-wrap').hidden = !on;
   el('transcript').hidden = on;
-  el('detail-commits').hidden = on || el('detail-commits').hidden;
-  el('detail-urls').hidden = on || el('detail-urls').hidden;
+  // The card above stays in every mode: a dev-server link the agent printed is worth
+  // as much while you are watching the pane as while you are reading the chat.
   if (paneTimer) clearInterval(paneTimer);
   paneTimer = null;
   if (on && !document.hidden) {
@@ -2088,7 +2261,7 @@ function renderHosts() {
     if (h.id !== 'local') {
       const del = document.createElement('button');
       del.className = 'host-del';
-      del.textContent = '×';
+      del.append(icon('close', 'ico ico-sm'));
       del.setAttribute('aria-label', `Remove ${h.name}`);
       del.onclick = () => {
         hosts = hosts.filter((x) => x.id !== h.id);
@@ -2160,7 +2333,7 @@ window.addEventListener('scroll', updateJump, { passive: true });
 function paintSendMode() {
   const btn = el('send-mode');
   const submit = settings.sendMode !== 'type';
-  btn.textContent = submit ? '⏎' : '⌨';
+  el('send-mode-icon').setAttribute('href', submit ? '#i-enter' : '#i-keyboard');
   btn.classList.toggle('on', !submit);
   btn.title = submit
     ? 'Submit: send the message and let the agent run it'
@@ -2230,6 +2403,127 @@ el('stop').addEventListener('click', async () => {
   }
 });
 
+// ---- saved prompts ----
+//
+// The list is Xirp's own, from its settings on the desktop, so it is the same list you
+// keep there. Tapping one fills the composer and stops: on a phone, sending has to stay
+// a separate deliberate act, or a mistyped tap talks to your agent.
+//
+// Writing is a whole-list replace, because `chirp:savedPrompts:set` is the only call the
+// daemon offers. The bridge reads and writes back inside one request, so a prompt added
+// on the desktop within that window is lost.
+
+function promptsError(msg) {
+  const box = el('prompts-error');
+  box.textContent = msg;
+  box.hidden = !msg;
+}
+
+async function openPrompts() {
+  promptsError('');
+  el('prompts-sheet').hidden = false;
+  await renderPrompts();
+}
+
+async function renderPrompts() {
+  const box = el('prompts-list');
+  box.replaceChildren(skeletonCards(2, ['40%', '86%']));
+  let prompts = [];
+  try {
+    ({ prompts } = await api('/api/prompts'));
+  } catch (e) {
+    box.replaceChildren();
+    promptsError(e.message);
+    return;
+  }
+  box.replaceChildren();
+  if (!prompts.length) {
+    const blank = document.createElement('p');
+    blank.className = 'subdued setting-hint';
+    blank.textContent = 'No saved prompts on this machine yet.';
+    box.append(blank);
+    return;
+  }
+  for (const p of prompts) {
+    const row = document.createElement('div');
+    row.className = 'prompt-row';
+
+    const pick = document.createElement('button');
+    pick.className = 'prompt-pick';
+    const nm = document.createElement('strong');
+    nm.textContent = p.name;
+    const preview = document.createElement('span');
+    preview.className = 'subdued';
+    preview.textContent = p.prompt;
+    pick.append(nm, preview);
+    pick.onclick = () => usePrompt(p);
+
+    const del = document.createElement('button');
+    del.className = 'prompt-del';
+    del.setAttribute('aria-label', `Delete ${p.name}`);
+    del.append(icon('close', 'ico ico-sm'));
+    del.onclick = () => deletePrompt(p);
+
+    row.append(pick, del);
+    box.append(row);
+  }
+}
+
+function usePrompt(p) {
+  const box = el('composer-text');
+  // Appended, not substituted: the text already in the composer is usually the context
+  // the prompt is about.
+  box.value = box.value.trim() ? `${box.value.replace(/\s+$/, '')}\n\n${p.prompt}` : p.prompt;
+  box.dispatchEvent(new Event('input'));
+  el('prompts-sheet').hidden = true;
+  box.focus();
+  toast(`Put "${p.name}" in the composer`);
+}
+
+async function deletePrompt(p) {
+  if (!confirm(`Delete the saved prompt "${p.name}" from Xirp?`)) return;
+  promptsError('');
+  try {
+    await api('/api/prompts', { method: 'POST', body: JSON.stringify({ delete: p.id }) });
+    toast('Deleted');
+    renderPrompts();
+  } catch (e) {
+    promptsError(e.message);
+  }
+}
+
+el('prompt-btn').addEventListener('click', openPrompts);
+el('prompts-close').addEventListener('click', () => (el('prompts-sheet').hidden = true));
+el('prompts-sheet').addEventListener('click', (e) => {
+  if (e.target === el('prompts-sheet')) el('prompts-sheet').hidden = true;
+});
+
+el('prompt-save').addEventListener('click', async (e) => {
+  const text = el('composer-text').value.trim();
+  const name = el('prompt-name').value.trim();
+  if (!text) {
+    promptsError('Type the prompt in the composer first, then name it here.');
+    return;
+  }
+  if (!name) {
+    promptsError('Give it a name, so you can find it later.');
+    return;
+  }
+  const btn = e.target;
+  btn.disabled = true;
+  try {
+    await api('/api/prompts', { method: 'POST', body: JSON.stringify({ name, prompt: text }) });
+    el('prompt-name').value = '';
+    promptsError('');
+    toast(`Saved "${name}"`);
+    renderPrompts();
+  } catch (e2) {
+    promptsError(e2.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ---- boot ----
 
 // A pairing link carries the key in the fragment. Exchange it for a cookie and get
@@ -2265,6 +2559,8 @@ async function boot() {
     try {
       const body = await api('/api/sessions');
       state.sessions = body.sessions || [];
+      state.loaded = true;
+      noteModules(body);
       setLink(true);
       markSeen();
       openSession(wanted);
@@ -2287,8 +2583,10 @@ async function boot() {
   // Warm the session list for the active machine so opening it is instant, and so a
   // 401 surfaces as the login gate rather than as an empty folder list.
   try {
-    const { sessions } = await api('/api/sessions');
-    state.sessions = sessions || [];
+    const body = await api('/api/sessions');
+    state.sessions = body.sessions || [];
+    state.loaded = true;
+    noteModules(body);
     setLink(true);
   } catch (e) {
     setLink(false, e.message);
