@@ -8,7 +8,7 @@
  * the class of bug this app exists to avoid.
  */
 
-const SHELL = 'xirp-shell-v6';
+const SHELL = 'xirp-shell-v7';
 const SHELL_FILES = [
   './',
   './index.html',

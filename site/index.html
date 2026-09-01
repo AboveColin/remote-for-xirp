@@ -62,7 +62,7 @@
             "installUrl": "https://github.com/AboveColin/remote-for-xirp#install",
             "codeRepository": "https://github.com/AboveColin/remote-for-xirp",
             "programmingLanguage": ["Go", "JavaScript"],
-            "softwareVersion": "0.3.1",
+            "softwareVersion": "0.4.0",
             "datePublished": "2026-08-12",
             "dateModified": "2026-08-12",
             "license": "https://opensource.org/licenses/MIT",
@@ -82,6 +82,7 @@
               "Review uncommitted and branch diffs per file",
               "Web Push when a session finishes, fails or needs an answer",
               "Start, fork and hand over sessions",
+              "Insert the prompts you keep in Xirp on the desktop",
               "Pair by QR code over the local network",
               "Light and dark, following the phone"
             ],
@@ -484,7 +485,16 @@ xirp-remote install --generate-key # start it, and print a QR code</code></pre>
         <div class="card">
           <h3>Notifications</h3>
           <p>
-            Web Push when an agent finishes, fails, or wants an answer — with the app closed.
+            Web Push with the app closed: when an agent finishes a turn, when a session ends
+            or fails, and when one wants an answer. The first of those is the status Xirp sets
+            only when nobody is at the desk.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Saved prompts</h3>
+          <p>
+            The prompts you keep in Xirp on the desktop, one tap away. Tapping one fills the
+            composer and stops there, so sending stays deliberate.
           </p>
         </div>
         <div class="card">
@@ -520,7 +530,7 @@ xirp-remote install --generate-key # start it, and print a QR code</code></pre>
 
       <h2>What it deliberately will not do</h2>
       <p class="note">
-        It reaches 33 of the daemon's 212 message types. No git writes, no terminal attach, no
+        It reaches 36 of the daemon's 223 message types. No git writes, no terminal attach, no
         session deletion, no settings changes. Remote approval of permission prompts is absent
         because the daemon holds a request open for about half a second before falling through
         to the agent's own dialog — no polling client can catch that, and pretending otherwise

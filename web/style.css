@@ -60,6 +60,17 @@
   --shadow: 0 1px 2px rgba(16, 20, 28, 0.06), 0 8px 24px rgba(16, 20, 28, 0.06);
   --shadow-sheet: 0 -8px 40px rgba(16, 20, 28, 0.18);
 
+  /* Placeholder rows while a request is in flight. Two stops, because a flat block
+     reads as a broken image and a moving one reads as work. */
+  --sk: #e6e9ee;
+  --sk-hi: #f3f5f8;
+
+  /* The meter and the ring are 4px of colour, not text. The text tokens carry contrast
+     at 13px and turn muddy at 4px, so the fills have their own values. */
+  --fill-ok: #16a35c;
+  --fill-warm: #e08c0b;
+  --fill-hot: #d93a40;
+
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 18px;
@@ -102,7 +113,14 @@
     --info: #6fb0fb;
     --info-soft: #10203a;
 
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --sk: #1c212a;
+  --sk-hi: #242a34;
+
+  --fill-ok: #4ed17f;
+  --fill-warm: #f2b350;
+  --fill-hot: #f4787c;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     --shadow-sheet: 0 -8px 40px rgba(0, 0, 0, 0.6);
   }
 }
@@ -134,10 +152,42 @@
   --info: #6fb0fb;
   --info-soft: #10203a;
 
+  --sk: #1c212a;
+  --sk-hi: #242a34;
+
+  --fill-ok: #4ed17f;
+  --fill-warm: #f2b350;
+  --fill-hot: #f4787c;
+
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   --shadow-sheet: 0 -8px 40px rgba(0, 0, 0, 0.6);
 }
 
+/* ---- icons ----
+ *
+ * One drawing of each, in the sprite at the top of index.html, referenced with <use>.
+ * They inherit currentColor, so a button's colour and its icon cannot disagree.
+ */
+.sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+.ico {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ico-sm {
+  width: 15px;
+  height: 15px;
+}
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
@@ -517,11 +567,21 @@ label {
 }
 
 .searchbar {
+  position: relative;
   margin-bottom: 12px;
+}
+.searchbar-ico {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-faint);
+  pointer-events: none;
 }
 .searchbar input {
   border-radius: var(--radius-pill);
-  padding-left: 18px;
+  /* Room for the mark, which sits inside the field rather than beside it. */
+  padding-left: 40px;
   background: var(--surface);
 }
 
@@ -579,6 +639,10 @@ label {
   text-align: center;
 }
 .welcome .btn-big {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   margin-top: 2px;
 }
 
@@ -691,6 +755,7 @@ label {
   gap: 9px;
 }
 .machine-dot {
+  position: relative;
   width: 9px;
   height: 9px;
   border-radius: 50%;
@@ -699,6 +764,29 @@ label {
 }
 .machine-dot.is-online {
   background: var(--ok);
+}
+/* A ring that fades outward. The machines screen is otherwise all text, and "online" is
+   the one thing you look for on it. */
+.machine-dot.is-online::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1px solid var(--ok);
+  opacity: 0;
+  animation: halo 2.8s ease-out infinite;
+}
+
+@keyframes halo {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.55);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.15);
+  }
 }
 .machine-dot.is-offline {
   background: var(--danger);
@@ -798,6 +886,10 @@ label {
   font: inherit;
   cursor: pointer;
 }
+.folder.is-asking .folder-text em {
+  color: var(--warn);
+}
+
 .folder:active {
   background: var(--surface-press);
 }
@@ -960,12 +1052,27 @@ label {
 .pill-running {
   color: var(--ok);
 }
+/* The only moving thing on a list screen, and it means one thing: an agent is working
+   right now. */
+.pill-running::before {
+  animation: beat 1.9s ease-in-out infinite;
+}
 .pill-waiting {
   color: var(--warn);
 }
-.pill-failed,
-.pill-stopped {
+.pill-failed {
   color: var(--danger);
+}
+/* A turn that ended with nobody at the desk. Not a failure and not still working, so it
+   gets its own colour rather than borrowing one. */
+.pill-finished {
+  color: var(--info);
+}
+.pill-waiting-on-parent {
+  color: var(--text-dim);
+}
+.pill-paused {
+  color: var(--text-faint);
 }
 .pill-completed {
   color: var(--text-dim);
@@ -977,9 +1084,16 @@ label {
   color: var(--danger);
 }
 
-.empty {
-  padding: 40px 0;
-  text-align: center;
+@keyframes beat {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 0.5;
+  }
 }
 .foot {
   padding: 20px 0 8px;
@@ -987,11 +1101,203 @@ label {
   font-size: 13px;
 }
 
+/* ---- context meter ----
+ *
+ * How full the context window is decides whether to keep going or start again, and it
+ * used to be one number among six in a grey line. A bar answers it without reading.
+ * The tone changes at 60 and 85 per cent; see contextTone() in app.js for why.
+ */
+.meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.meter-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-press);
+  overflow: hidden;
+}
+.meter-track i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--fill-ok);
+  transition: width 0.3s ease;
+}
+.meter-num {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+.meter[data-tone="warm"] .meter-track i {
+  background: var(--fill-warm);
+}
+.meter[data-tone="hot"] .meter-track i {
+  background: var(--fill-hot);
+}
+.meter[data-tone="warm"] .meter-num {
+  color: var(--warn);
+}
+.meter[data-tone="hot"] .meter-num {
+  color: var(--danger);
+}
+
 /* ---- session detail ----
  *
- * One line of facts, then the work, then the conversation. The facts line is grey on
- * purpose: it is reference, not news.
+ * One card of facts, then the work, then the conversation. The facts are grey on
+ * purpose: they are reference, not news. Only the status and the context ring carry
+ * colour, because those are the two things you check.
+ *
+ * This card replaced five stacked blocks (mode switch, status line, git line, link
+ * chips, commits accordion) which between them owned the whole first screen of a phone.
  */
+
+.scard {
+  position: relative;
+  margin-bottom: 12px;
+  padding: 14px 16px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+/* The project's colour, the same hue the folder list uses for it, so the two screens
+   agree about which project you are in. */
+.scard::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: hsl(var(--hue, 250) 70% 60%);
+}
+.scard-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.scard-facts {
+  flex: 1;
+  min-width: 0;
+}
+.scard-facts .meta {
+  margin-bottom: 8px;
+}
+.scard-git {
+  font-size: 12.5px;
+  gap: 4px 12px;
+}
+/* The branch line wraps on a narrow phone, and a separator dot at the head of a wrapped
+   line reads as a bullet. The gap and the amber of a dirty count already separate these,
+   so the dots come off this line only. */
+.scard-git .tag + .tag::before {
+  content: none;
+}
+.scard-ph {
+  width: 100%;
+  padding: 2px 0 6px;
+}
+.scard .urls,
+.scard .commits {
+  margin-bottom: 10px;
+}
+.scard .commits {
+  margin: 0 -16px;
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: transparent;
+}
+.scard .commits summary {
+  padding: 11px 16px;
+  font-size: 13.5px;
+}
+/* The disclosure state has to be visible without reading the label, and the browsers'
+   own markers differ enough to be worth replacing. */
+.commits summary {
+  list-style: none;
+  cursor: pointer;
+}
+.commits summary::-webkit-details-marker {
+  display: none;
+}
+.sum-chev {
+  color: var(--text-faint);
+  transition: transform 0.18s;
+}
+.commits[open] .sum-chev {
+  transform: rotate(90deg);
+}
+
+/* The context ring. The stylesheet rotates the svg so the arc starts at the top: one
+   starting at three o'clock reads as a wrong number. */
+.ring {
+  position: relative;
+  flex: none;
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0;
+}
+.ring svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.ring-track,
+.ring-arc {
+  fill: none;
+  stroke-width: 4;
+}
+.ring-track {
+  stroke: var(--surface-press);
+}
+.ring-arc {
+  stroke: var(--fill-ok);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.4s ease;
+}
+.ring[data-tone="warm"] .ring-arc {
+  stroke: var(--fill-warm);
+}
+.ring[data-tone="hot"] .ring-arc {
+  stroke: var(--fill-hot);
+}
+.ring-label {
+  position: relative;
+  grid-row: 1;
+  font-size: 13px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+/* Without this the number reads as progress towards something good. */
+.ring-cap {
+  position: relative;
+  grid-row: 2;
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  line-height: 1;
+}
+.ring[data-tone="warm"] .ring-label {
+  color: var(--warn);
+}
+.ring[data-tone="hot"] .ring-label {
+  color: var(--danger);
+}
 
 .meta {
   display: flex;
@@ -1020,6 +1326,9 @@ label {
 }
 
 .nopane-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   margin-bottom: 12px;
   padding: 12px 14px;
   border: 1px solid var(--danger);
@@ -1036,6 +1345,9 @@ label {
   margin-bottom: 12px;
 }
 .urls a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   max-width: 100%;
   padding: 7px 12px;
   border-radius: var(--radius-pill);
@@ -1057,6 +1369,9 @@ label {
   overflow: hidden;
 }
 .commits summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 12px 16px;
   font-size: 14px;
   font-weight: 550;
@@ -1288,9 +1603,24 @@ label {
     animation: none;
     opacity: 0.5;
   }
+  /* Everything that moves, off. The status dot and the placeholder rows still read
+     standing still: one has colour, the other is grey. */
+  .pill-running::before,
+  .sk,
+  .machine-dot.is-online::after {
+    animation: none;
+  }
+  .meter-track i,
+  .ring-arc,
+  .sum-chev {
+    transition: none;
+  }
 }
 
 .jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   position: fixed;
   left: 50%;
   bottom: calc(96px + env(safe-area-inset-bottom));
@@ -1328,7 +1658,11 @@ label {
   backdrop-filter: saturate(180%) blur(14px);
   border-top: 1px solid var(--line-soft);
 }
+/* Two round buttons, the field and Send have to fit 393px, the narrowest phone this
+   targets. Measured there: the field gets 146px, so the placeholder has to be short and
+   the field has to shrink rather than push the row taller. */
 .composer textarea {
+  min-width: 0;
   flex: 1;
   min-height: var(--tap);
   max-height: 40vh;
@@ -1863,6 +2197,130 @@ label {
 }
 .manual .btn {
   margin-top: 20px;
+}
+
+/* ---- placeholders while a request is in flight ---- */
+
+.sk {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--sk) 25%, var(--sk-hi) 37%, var(--sk) 63%);
+  background-size: 400% 100%;
+  animation: sweep 1.3s ease infinite;
+}
+.sk + .sk {
+  margin-top: 10px;
+}
+.sk-card {
+  pointer-events: none;
+}
+.sk-title {
+  height: 17px;
+  margin: 2px 0;
+}
+
+@keyframes sweep {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+/* ---- nothing here yet ----
+ *
+ * An empty screen has to say what to do next, or it reads as a failure to load.
+ */
+
+.blank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 44px 24px;
+  text-align: center;
+}
+.blank-mark {
+  width: 40px;
+  height: 40px;
+  margin-bottom: 6px;
+  fill: none;
+  stroke: var(--text-faint);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.7;
+}
+.blank strong {
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+.blank span {
+  font-size: 14px;
+  max-width: 34ch;
+}
+
+/* ---- saved prompts ---- */
+
+.prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.prompt-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.prompt-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-hi);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.prompt-pick:active {
+  background: var(--surface-press);
+}
+.prompt-pick strong {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+/* Two lines of the prompt is enough to recognise it; the whole thing belongs in the
+   composer, not in a list. */
+.prompt-pick span {
+  font-size: 12.5px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Deleting is the rare action of the two, so it carries no box: an outline the height
+   of a two-line row reads as a second, equal choice. */
+.prompt-del {
+  flex: none;
+  width: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.prompt-del:active {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 /* ---- toast ---- */
