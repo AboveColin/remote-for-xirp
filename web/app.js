@@ -1131,6 +1131,25 @@ async function refreshDiagnostics() {
       body.append(diagCard('Database', rows));
     }
 
+    // What this app is doing to the daemon, which is the part nobody else can see.
+    // `drift` is the number of rows the last full resync had to correct: above zero
+    // means a broadcast was missed and the phone was shown something untrue.
+    const store = d.store || {};
+    const tr = d.transcripts || {};
+    body.append(
+      diagCard('This bridge', [
+        ['Daemon calls made', String(d.daemonCalls ?? '—')],
+        ['Sessions held', String(store.sessions ?? '—')],
+        ['Projects held', String(store.projects ?? '—')],
+        ['Rows corrected at resync', String(store.drift ?? '—'), store.drift ? 'bad' : 'good'],
+        ['Last resync', store.syncedSecondsAgo == null ? 'never' : `${store.syncedSecondsAgo}s ago`],
+        ['Event streams open', String(d.streams ?? 0)],
+        ['Transcripts held', `${tr.sessions ?? 0} (${tr.messages ?? 0} messages)`],
+        ['Transcript reads', String(tr.reads ?? 0)],
+        ['Transcripts re-read', String(tr.repairs ?? 0), tr.repairs ? 'bad' : ''],
+      ])
+    );
+
     body.append(diagCard('Modules', (d.modules || []).map((m) => [m, 'active'])));
     el('diag-foot').textContent = `checked ${new Date().toLocaleTimeString()}`;
   } catch (e) {

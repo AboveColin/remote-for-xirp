@@ -58,19 +58,23 @@ Building from source, every CLI subcommand, and pinning which address it serves 
 | | |
 |---|---|
 | **Machines, then folders, then sessions** | Opens on the machines it knows about, each with a live dot, project and running counts and round-trip time; then that machine's projects, then their sessions. A session list only means something once you have said which machine you mean. |
+| **Live, not polled** | The bridge follows the daemon's own broadcasts and streams what changed to the phone, so a session that finishes shows up in about a second. The screen it is on decides what to re-read; a poll stays underneath at 30 seconds for a phone that slept through the stream. |
 | **Pair by QR** | Scanning is the primary action on a cold start; typing an address is there but secondary. The link carries the key in the URL *fragment*, so it never reaches a server log. |
 | **Chat, full transcript, or the real tmux pane** | The pane is the session's actual one, ANSI colours and all, so slash commands, model pickers and permission prompts work without this app knowing they exist. A key row supplies Escape, Tab, arrows, Enter and Ctrl-C. |
 | **Answer a session** | Enter sends, Shift+Enter inserts a newline. **Submit** types and presses Enter so the agent acts; **Type** leaves the text in its input unsent. |
+| **Answer a permission prompt** | A prompt appears within milliseconds, because the daemon broadcasts it. Allow and Deny work for the half-second Xirp holds the request; after that its own dialog has taken over, so the app reads the numbered menu the agent drew in its terminal and offers those numbers as buttons. It shows nothing when it cannot see a menu. |
+| **Send it a file** | A screenshot of the bug, from the session's actions sheet. The bridge writes the file to a temp folder on the Mac and puts the path in the agent's input, unsent, so you still say what to do with it. |
 | **Review the diff** | What a session changed, uncommitted and against its base branch, per-file counts, the rendered unified diff, the whole file when the diff is not enough, and a link to the branch's pull request when the daemon knows of one. |
 | **Notifications** | Web Push when an agent finishes a turn, a session ends, one fails, or one wants an answer, and it arrives with the app closed. Tapping it opens that session. "Finished a turn" is the daemon's `finished` status, which it sets only when nobody is at the desk, so it is the one that matters here. |
 | **Start, fork, hand over** | Create a session with a project, agent, model and goal, optionally on a new branch; fork a conversation when the agent went down a wrong path; hand a session to a different agent, keeping its history. |
 | **Search every session** | Metadata, messages and JSONL transcripts, including completed sessions the list no longer shows. |
-| **Saved prompts** | The prompts you keep in Xirp on the desktop, listed on the phone. Tap one to drop it into the composer, unsent; save what you typed as a new one. |
+| **Saved prompts** | The prompts you keep in Xirp on the desktop, listed on the phone. Tap one to drop it into the composer, unsent; save what you typed as a new one; or start a new session from one. |
 | **See the state of the work** | Branch with staged, modified and untracked counts, recent commits, and any URLs the agent printed as tappable links — loopback addresses filtered out, since they would not resolve on a phone. |
 | **Restore and rename** | Revive or dismiss sessions after Xirp restarts, and rename one by hand or by asking the agent to retitle it from the conversation. |
 | **Installable** | A PWA that lives on the home screen and opens full-screen. An Android APK can be built for your own origin — see [`deploy/android/`](deploy/android/), which also explains why one cannot be published for everyone. |
-| **Diagnostics** | Whether the daemon is reachable, tmux availability and live pane count, the daemon's database load, which feature modules this edition has, and the daemon's own log filtered to warnings and errors — which is where the real reason for a failure appears. |
+| **Diagnostics** | Whether the daemon is reachable, tmux availability and live pane count, the daemon's database load, which feature modules this edition has, and the daemon's own log filtered to warnings and errors, which is where the real reason for a failure appears. It also reports what this app itself is doing: daemon calls made, rows the session store had to correct at its last resync, and transcripts held. |
 | **Multiple machines** | Each host is one Mac running Xirp. Add others and switch between them. |
+| **Readable with the Mac asleep** | The last session list per machine is kept on the phone, and an unreachable Mac shows it with the time it was true rather than an error. That stamp is the point; nothing else is cached. |
 | **Light and dark** | Follows the phone by default, with an explicit override in Settings. The terminal view stays dark in both, because the agent picked its ANSI colours for a dark background. |
 
 Sessions without a tmux pane are marked and their composer hidden, because
@@ -80,12 +84,15 @@ that can only return nothing.
 
 ## What it deliberately does not do
 
-- **Approve permission prompts.** The daemon holds a request open for at most 500 ms
-  before falling through to the agent's own dialog, so no polling client can catch one.
-  The terminal view answers the agent's prompt directly instead. Detail:
+- **Approve a permission prompt through the API.** The daemon holds a request for at most
+  500 ms before its own dialog takes over, which no human beats. What the app does
+  instead is honest about that: the daemon broadcasts the request, so the prompt appears
+  at once, and once the window has passed the app answers the agent's own menu in its
+  terminal by typing the number. Detail:
   [`docs/protocol.md`](docs/protocol.md#why-there-is-no-remote-approval-of-permission-prompts).
 - **Write to git, attach a terminal, delete a session, or change any app setting.**
-  36 of the daemon's 223 message types are reachable; `git:` writes, `terminal:`,
+  35 of the daemon's 223 request types are reachable, plus the 9 broadcasts it
+  listens to; `git:` writes, `terminal:`,
   `session:delete` and every `settings:` mutation are simply not proxied. The one
   `settings:` call is `getModels`, which reads the model list for the new-session sheet.
 - **Run anywhere but macOS**, for the reason in Requirements.

@@ -56,7 +56,7 @@ cookie from `POST /api/auth`. In open mode no credential is needed.
 | POST | `/api/sessions/{id}/ack` | Acknowledge a completed or failed session. |
 | GET | `/api/models?agent=` | Models for an agent, with context window and pricing. |
 | GET | `/api/sessions/{id}/pane?lines=N` | The session's tmux pane, ANSI intact. |
-| POST | `/api/sessions/{id}/keys?key=` | Send one allowlisted key (escape, tab, up, down, enter, ctrl-c, …). |
+| POST | `/api/sessions/{id}/keys?key=` | Send one allowlisted key (escape, tab, up, down, enter, ctrl-c, the digits 1 to 9, …). The digits answer an agent's own numbered permission prompt. |
 | GET | `/api/pair[?format=png]` | Pairing URL, or a QR PNG of it. |
 | GET | `/api/events` | Server-sent events naming what changed: `{"kind":"session","id":"..."}`, plus `sessions`, `projects`, `restorable` and `permissions`. Carries no data, so the client re-reads the endpoint it already knows. At most 8 streams, and the refusal says so. |
 | GET | `/api/diagnostics` | Daemon, tmux, database, module and store state, plus the number of daemon calls this process has made. |
@@ -72,6 +72,7 @@ cookie from `POST /api/auth`. In open mode no credential is needed.
 | GET | `/api/restorable` | Sessions left needing a restore-or-dismiss decision. |
 | POST | `/api/restore` | `{restore: [], dismiss: []}`. |
 | POST | `/api/sessions/{id}/rename` | `{name}` or `{regenerate: true}`. |
+| POST | `/api/sessions/{id}/upload?name=` | Raw body, at most 10 MB. Writes it to `$TMPDIR/xirp-remote/{id}/` and types the path into the agent's input without sending it. |
 | GET | `/api/sessions/{id}/file?path=` | One file from the session's checkout. `files:stat` runs first, so the answer names a directory, a missing path or a file over 5 MB instead of reading it. |
 | GET | `/api/prompts` | The saved prompts kept in Xirp's own settings. |
 | POST | `/api/prompts` | `{name, prompt}` adds, `{id, name, prompt}` replaces, `{delete: id}` removes. |
