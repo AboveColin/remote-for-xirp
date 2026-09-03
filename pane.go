@@ -20,14 +20,9 @@ import (
 // `capture-pane -e` keeps the SGR sequences; the browser renders them. `-J` joins
 // wrapped lines so a narrow phone does not re-wrap already-wrapped output.
 func sessionPane(w http.ResponseWriter, r *http.Request, id string) {
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	sm, _ := res["session"].(map[string]any)
-	if sm == nil {
-		writeJSON(w, 404, map[string]any{"error": "session not found"})
 		return
 	}
 	target, _ := sm["tmuxSession"].(string)
@@ -108,12 +103,11 @@ func sessionKeys(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
 		return
 	}
-	sm, _ := res["session"].(map[string]any)
 	target, _ := sm["tmuxSession"].(string)
 	if target == "" {
 		writeJSON(w, 400, map[string]any{"error": "session has no tmux pane"})

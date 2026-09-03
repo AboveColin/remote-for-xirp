@@ -33,23 +33,14 @@ import (
 const diffTextCap = 20000
 
 func sessionProject(id string) (projectID, worktree, branch string, err error) {
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		return "", "", "", err
 	}
-	sm, _ := res["session"].(map[string]any)
 	projectID, _ = sm["projectId"].(string)
 	worktree, _ = sm["worktreePath"].(string)
 	branch, _ = sm["branch"].(string)
 	return projectID, worktree, branch, nil
-}
-
-// projectBase returns a project's default branch, which is the base a feature branch
-// is worth comparing against. It reads the shared projects cache: the changes screen
-// and every file diff ask for the same base, and each miss is another serialized
-// `projects:list` in front of the diff the screen is waiting for.
-func projectBase(projectID string) string {
-	return projectsCached().base[projectID]
 }
 
 func diffFileList(raw []any) []map[string]any {

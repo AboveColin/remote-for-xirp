@@ -13,7 +13,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -128,6 +127,10 @@ func main() {
 	mux.HandleFunc("/.well-known/assetlinks.json", handleAssetLinks)
 	mux.Handle("/", static)
 
+	// One socket follows the daemon's broadcasts into the store, which answers the
+	// session list, the projects and the live permission requests without asking.
+	watchDaemon()
+
 	if err := loadPush(); err != nil {
 		log.Printf("could not read push subscriptions: %v", err)
 	}
@@ -228,50 +231,45 @@ func project(src map[string]any, fields []string) map[string]any {
 	return out
 }
 
-// One `projects:list` answer, shared by the name lookup on every session row and by
-// the base-branch lookup on every diff. Guarded because the push watcher reads it from
-// its own goroutine while HTTP handlers write it.
-type projectCache struct {
-	names map[string]string
-	base  map[string]string
-	at    time.Time
+// sessionRow reads one session. The store holds every session the daemon lists, so this
+// usually costs nothing; a session the list does not carry, which search can surface,
+// still costs one call.
+func sessionRow(id string) (map[string]any, error) {
+	if row := live.session(id); row != nil {
+		return row, nil
+	}
+	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	row, _ := res["session"].(map[string]any)
+	if row == nil {
+		return nil, errors.New("session not found")
+	}
+	return row, nil
 }
 
-var (
-	projectMu sync.Mutex
-	pcache    projectCache
-)
-
-func projectsCached() projectCache {
-	projectMu.Lock()
-	defer projectMu.Unlock()
-	if time.Since(pcache.at) < 60*time.Second && pcache.names != nil {
-		return pcache
-	}
-	names := map[string]string{}
-	base := map[string]string{}
-	res, err := client.Call(map[string]any{"type": "projects:list"}, "projects:list", 10*time.Second)
-	if err == nil {
-		if list, ok := res["projects"].([]any); ok {
-			for _, p := range list {
-				pm, ok := p.(map[string]any)
-				if !ok {
-					continue
-				}
-				id, _ := pm["id"].(string)
-				if id == "" {
-					continue
-				}
-				names[id], _ = pm["name"].(string)
-				base[id], _ = pm["defaultBranch"].(string)
-			}
+// Project names and default branches come from the store, which the daemon's
+// project:added, project:updated and project:removed broadcasts keep current.
+func projectNames() map[string]string {
+	out := map[string]string{}
+	for _, row := range live.projectRows() {
+		if id, _ := row["id"].(string); id != "" {
+			out[id], _ = row["name"].(string)
 		}
 	}
-	pcache = projectCache{names: names, base: base, at: time.Now()}
-	return pcache
+	return out
 }
 
-func projectNames() map[string]string { return projectsCached().names }
+func projectBase(projectID string) string {
+	for _, row := range live.projectRows() {
+		if id, _ := row["id"].(string); id == projectID {
+			base, _ := row["defaultBranch"].(string)
+			return base
+		}
+	}
+	return ""
+}
 
 // handleSessions serves GET (list) and POST (create) on /api/sessions.
 func handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -279,21 +277,12 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 		handleCreate(w, r)
 		return
 	}
-	res, err := client.Call(map[string]any{"type": "sessions:list"}, "sessions:list", 15*time.Second)
-	if err != nil {
-		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	raw, _ := res["sessions"].([]any)
+	raw := live.sessionRows()
 	names := projectNames()
 	tm := tmuxStatus()
 	forcedFresh := false
 	out := make([]map[string]any, 0, len(raw))
-	for _, s := range raw {
-		sm, ok := s.(map[string]any)
-		if !ok {
-			continue
-		}
+	for _, sm := range raw {
 		p := project(sm, sessionFields)
 		if id, ok := sm["projectId"].(string); ok {
 			p["projectName"] = names[id]
@@ -370,14 +359,9 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func sessionDetail(w http.ResponseWriter, r *http.Request, id string) {
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	sm, _ := res["session"].(map[string]any)
-	if sm == nil {
-		writeJSON(w, 404, map[string]any{"error": "session not found"})
 		return
 	}
 	out := project(sm, sessionFields)
@@ -507,13 +491,11 @@ func sessionStop(w http.ResponseWriter, r *http.Request, id string) {
 
 // ---- permission requests ----
 
+// handlePermissions answers from the store. The daemon broadcasts permission:request the
+// moment one appears, which is the only way to see one at all: it holds each for about
+// 500 ms, so a poll asking for the list arrives after every one of them has gone.
 func handlePermissions(w http.ResponseWriter, r *http.Request) {
-	res, err := client.Call(map[string]any{"type": "permission:list"}, "permission:list", 10*time.Second)
-	if err != nil {
-		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	writeJSON(w, 200, map[string]any{"requests": res["requests"]})
+	writeJSON(w, 200, map[string]any{"requests": live.permissionRows()})
 }
 
 func handlePermissionRespond(w http.ResponseWriter, r *http.Request) {

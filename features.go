@@ -187,14 +187,9 @@ func sessionURLs(w http.ResponseWriter, r *http.Request, id string) {
 // sessionLog returns recent commits from the session's worktree, so you can see
 // what an agent actually committed rather than inferring it from the transcript.
 func sessionLog(w http.ResponseWriter, r *http.Request, id string) {
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	sm, _ := res["session"].(map[string]any)
-	if sm == nil {
-		writeJSON(w, 404, map[string]any{"error": "session not found"})
 		return
 	}
 	projectID, _ := sm["projectId"].(string)
@@ -330,14 +325,9 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 // a count of changed files, so you can see from a phone whether an agent has left
 // work uncommitted.
 func sessionGit(w http.ResponseWriter, r *http.Request, id string) {
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	sm, _ := res["session"].(map[string]any)
-	if sm == nil {
-		writeJSON(w, 404, map[string]any{"error": "session not found"})
 		return
 	}
 	projectID, _ := sm["projectId"].(string)
@@ -417,14 +407,9 @@ func sessionFork(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	_ = json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body)
 
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	sm, _ := res["session"].(map[string]any)
-	if sm == nil {
-		writeJSON(w, 404, map[string]any{"error": "session not found"})
 		return
 	}
 	cli := cliSessionID(sm)
@@ -498,12 +483,10 @@ func sessionSwapAgent(w http.ResponseWriter, r *http.Request, id string) {
 
 	out := map[string]any{"ok": true, "agent": to, "from": from, "to": to}
 	// session:agent-swapped carries sessionId, from and to, and no session object. The
-	// daemon broadcasts session:updated with the row just before it, but a call that
-	// waits for one type discards the other, so the row is read back here.
-	if got, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second); err == nil {
-		if sm, ok := got["session"].(map[string]any); ok {
-			out["session"] = project(sm, sessionFields)
-		}
+	// daemon broadcasts session:updated with the row just before it, and the store keeps
+	// that, so the row is read from there.
+	if sm, err := sessionRow(id); err == nil {
+		out["session"] = project(sm, sessionFields)
 	}
 	writeJSON(w, 200, out)
 }
@@ -515,22 +498,15 @@ func sessionSwapAgent(w http.ResponseWriter, r *http.Request, id string) {
 // is exactly the wrong place if you are away and an agent has stopped.
 
 func handleRestorable(w http.ResponseWriter, r *http.Request) {
-	res, err := client.Call(map[string]any{"type": "sessions:restorable"}, "sessions:restorable", 20*time.Second)
-	if err != nil {
-		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	raw, _ := res["sessions"].([]any)
 	names := projectNames()
+	raw := live.restorableRows()
 	out := make([]map[string]any, 0, len(raw))
-	for _, s := range raw {
-		if sm, ok := s.(map[string]any); ok {
-			e := project(sm, sessionFields)
-			if pid, _ := sm["projectId"].(string); pid != "" {
-				e["projectName"] = names[pid]
-			}
-			out = append(out, e)
+	for _, sm := range raw {
+		e := project(sm, sessionFields)
+		if pid, _ := sm["projectId"].(string); pid != "" {
+			e["projectName"] = names[pid]
 		}
+		out = append(out, e)
 	}
 	writeJSON(w, 200, map[string]any{"sessions": out})
 }
