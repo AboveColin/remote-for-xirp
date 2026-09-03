@@ -117,6 +117,7 @@ func main() {
 	mux.Handle("/api/push/test", authed(http.HandlerFunc(handlePushTest)))
 	mux.Handle("/api/logs", authed(http.HandlerFunc(handleLogs)))
 	mux.Handle("/api/prompts", authed(http.HandlerFunc(handlePrompts)))
+	mux.Handle("/api/events", authed(http.HandlerFunc(handleEvents)))
 	mux.Handle("/api/sessions", authed(http.HandlerFunc(handleSessions)))
 	mux.Handle("/api/sessions/", authed(http.HandlerFunc(handleSession)))
 	mux.Handle("/api/permissions", authed(http.HandlerFunc(handlePermissions)))

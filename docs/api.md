@@ -45,7 +45,7 @@ cookie from `POST /api/auth`. In open mode no credential is needed.
 | GET | `/api/sessions/{id}?limit=N` | Session plus transcript. `transcript=0` returns the session alone, which is what the terminal view polls: parsing a transcript spawns a `node` process for something that view does not draw. |
 | POST | `/api/sessions/{id}/message` | `{text}` → drives the agent. |
 | POST | `/api/sessions/{id}/stop` | Stop the session. |
-| GET | `/api/permissions` | Live permission requests (see the caveat in [`protocol.md`](protocol.md#why-there-is-no-remote-approval-of-permission-prompts)). |
+| GET | `/api/permissions` | Live permission requests, from the daemon's `permission:request` broadcast rather than a poll, each marked `expired` once the daemon has handed the prompt to the agent's own dialog. See the caveat in [`protocol.md`](protocol.md#why-there-is-no-remote-approval-of-permission-prompts). |
 | POST | `/api/permissions/{id}` | `{behavior: allow\|deny, message?}`. |
 | GET | `/api/search?q=` | Full-text search across sessions, deduplicated, capped at 40. |
 | GET | `/api/meta` | Projects and installed agents, for the create form. |
@@ -58,7 +58,8 @@ cookie from `POST /api/auth`. In open mode no credential is needed.
 | GET | `/api/sessions/{id}/pane?lines=N` | The session's tmux pane, ANSI intact. |
 | POST | `/api/sessions/{id}/keys?key=` | Send one allowlisted key (escape, tab, up, down, enter, ctrl-c, …). |
 | GET | `/api/pair[?format=png]` | Pairing URL, or a QR PNG of it. |
-| GET | `/api/diagnostics` | Daemon, tmux, database and module state. |
+| GET | `/api/events` | Server-sent events naming what changed: `{"kind":"session","id":"..."}`, plus `sessions`, `projects`, `restorable` and `permissions`. Carries no data, so the client re-reads the endpoint it already knows. At most 8 streams, and the refusal says so. |
+| GET | `/api/diagnostics` | Daemon, tmux, database, module and store state, plus the number of daemon calls this process has made. |
 | GET | `/api/logs?level=&limit=` | Daemon log records at or above a pino level. |
 | GET | `/api/sessions/{id}/changes` | Changed files: uncommitted and branch-vs-base, plus the PR. |
 | GET | `/api/sessions/{id}/diff?path=&mode=` | One file's unified diff (`worktree` or `branch`). |

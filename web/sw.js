@@ -8,7 +8,7 @@
  * the class of bug this app exists to avoid.
  */
 
-const SHELL = 'xirp-shell-v7';
+const SHELL = 'xirp-shell-v8';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -42,7 +42,9 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET') return;
-  if (url.pathname.startsWith('/api/') || url.pathname === '/healthz') return; // never cached
+  // Never cached, and /api/events in particular must not be wrapped at all: an event
+  // stream does not end, so a worker that waits for the response holds it open forever.
+  if (url.pathname.startsWith('/api/') || url.pathname === '/healthz') return;
 
   // Network first, cache as fallback. Cache-first was the obvious choice and the
   // wrong one: the shell is served by a binary that gets rebuilt constantly, and
