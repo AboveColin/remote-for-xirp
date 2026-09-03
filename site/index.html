@@ -62,7 +62,7 @@
             "installUrl": "https://github.com/AboveColin/remote-for-xirp#install",
             "codeRepository": "https://github.com/AboveColin/remote-for-xirp",
             "programmingLanguage": ["Go", "JavaScript"],
-            "softwareVersion": "0.4.0",
+            "softwareVersion": "0.5.0",
             "datePublished": "2026-08-12",
             "dateModified": "2026-08-12",
             "license": "https://opensource.org/licenses/MIT",
@@ -83,6 +83,9 @@
               "Web Push when a session finishes, fails or needs an answer",
               "Start, fork and hand over sessions",
               "Insert the prompts you keep in Xirp on the desktop",
+              "Live updates: the daemon's own changes, streamed to the phone",
+              "Answer an agent's permission prompt from the phone",
+              "Send a screenshot into a session",
               "Pair by QR code over the local network",
               "Light and dark, following the phone"
             ],
@@ -491,6 +494,29 @@ xirp-remote install --generate-key # start it, and print a QR code</code></pre>
           </p>
         </div>
         <div class="card">
+          <h3>Live, not polled</h3>
+          <p>
+            The bridge follows the daemon's own broadcasts and streams what changed, so a
+            session that finishes shows up in about a second. A poll stays underneath for
+            a phone that slept through it.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Answer a permission prompt</h3>
+          <p>
+            Xirp holds a request for half a second, then its own dialog takes over. So the
+            app reads the numbered menu the agent drew in its terminal and offers those
+            numbers as buttons. It shows nothing when it cannot see a menu.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Send it a screenshot</h3>
+          <p>
+            Written to a temp folder on the Mac, with the path put in the agent's input
+            unsent, so you still say what to do with it. Nothing lands in your repository.
+          </p>
+        </div>
+        <div class="card">
           <h3>Saved prompts</h3>
           <p>
             The prompts you keep in Xirp on the desktop, one tap away. Tapping one fills the
@@ -530,11 +556,12 @@ xirp-remote install --generate-key # start it, and print a QR code</code></pre>
 
       <h2>What it deliberately will not do</h2>
       <p class="note">
-        It reaches 36 of the daemon's 223 message types. No git writes, no terminal attach, no
-        session deletion, no settings changes. Remote approval of permission prompts is absent
-        because the daemon holds a request open for about half a second before falling through
-        to the agent's own dialog — no polling client can catch that, and pretending otherwise
-        would be worse than leaving it out.
+        It reaches 35 of the daemon's 223 request types and listens to 9 of its broadcasts.
+        No git writes, no terminal attach, no session deletion, no settings changes.
+        Approving a permission prompt through the API is still absent, because the daemon
+        holds a request for about half a second before its own dialog takes over, which no
+        human beats. What the app does instead is answer that dialog: it reads the numbered
+        menu the agent drew and types the number, and shows nothing when it cannot see one.
       </p>
 
       <h2 id="faq">Questions</h2>

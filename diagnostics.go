@@ -126,6 +126,7 @@ func handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	// `repairs` is how often the message count said a transcript file had been rewritten
 	// under the cache, which is the only way that cache can be wrong.
 	out["transcripts"] = transcriptHealth()
+	out["streams"] = openStreams.Load()
 
 	if res, err := client.Call(map[string]any{"type": "db:query-stats"}, "db:query-stats", 10*time.Second); err == nil {
 		if stats, ok := res["stats"].(map[string]any); ok {
