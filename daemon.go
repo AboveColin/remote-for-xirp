@@ -244,7 +244,7 @@ func (c *Client) call(req map[string]any, wantType string, timeout time.Duration
 			continue
 		}
 		mt, _ := msg["type"].(string)
-		if mt == wantType {
+		if mt == wantType && aboutOurSession(req, msg, mt) {
 			return msg, nil
 		}
 		if mt == "error" {
@@ -259,6 +259,41 @@ func (c *Client) call(req map[string]any, wantType string, timeout time.Duration
 			}
 		}
 	}
+}
+
+// sessionOf reads the session a frame is about. The daemon puts it at the top level on
+// some types and inside the session row on others.
+func sessionOf(msg map[string]any) string {
+	if id, _ := msg["sessionId"].(string); id != "" {
+		return id
+	}
+	if sm, ok := msg["session"].(map[string]any); ok {
+		id, _ := sm["id"].(string)
+		return id
+	}
+	return ""
+}
+
+// aboutOurSession says whether a frame of the wanted type answers this request rather
+// than someone else's.
+//
+// Matching on the type alone is not enough, because the daemon broadcasts several reply
+// types for every session: session:updated from 43 places, session:urls, session:created.
+// So a status change on any other session could satisfy a wait. Stopping session A then
+// reported session B's status, and renaming A returned B's row for the header.
+//
+// session:created is the one reply that is legitimately about a different session: a fork
+// asks about the source and is answered with the copy.
+func aboutOurSession(req, msg map[string]any, replyType string) bool {
+	if replyType == "session:created" {
+		return true
+	}
+	asked, _ := req["sessionId"].(string)
+	if asked == "" {
+		return true
+	}
+	got := sessionOf(msg)
+	return got == "" || got == asked
 }
 
 // daemonError turns one of the daemon's typed error frames into a Go error.

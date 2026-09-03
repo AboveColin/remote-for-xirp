@@ -286,3 +286,63 @@ func TestGitErrorCannotLeakIntoTheNextCall(t *testing.T) {
 		t.Fatalf("branch = %q, want main", branch)
 	}
 }
+
+// The daemon broadcasts session:updated for every session's every status change, so a
+// reply matched on type alone can be about someone else's session. Stopping A then
+// reported B's status.
+func TestCallIgnoresAnotherSessionsUpdate(t *testing.T) {
+	newFakeDaemon(t, func(req map[string]any, send func(map[string]any)) {
+		// B changes status while A's stop is in flight.
+		send(map[string]any{"type": "session:updated", "session": map[string]any{
+			"id": "B", "status": "running",
+		}})
+		send(map[string]any{"type": "session:updated", "session": map[string]any{
+			"id": "A", "status": "completed",
+		}})
+	})
+	res, err := client.Call(map[string]any{"type": "session:stop", "sessionId": "A"}, "session:updated", 3*time.Second)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	sm, _ := res["session"].(map[string]any)
+	if id, _ := sm["id"].(string); id != "A" {
+		t.Fatalf("answered about session %q, want A", id)
+	}
+	if got, _ := sm["status"].(string); got != "completed" {
+		t.Fatalf("status = %q, want completed", got)
+	}
+}
+
+// session:urls is broadcast too, so the same guard has to cover it.
+func TestCallIgnoresAnotherSessionsUrls(t *testing.T) {
+	newFakeDaemon(t, func(req map[string]any, send func(map[string]any)) {
+		send(map[string]any{"type": "session:urls", "sessionId": "B", "urls": []any{"http://b"}})
+		send(map[string]any{"type": "session:urls", "sessionId": "A", "urls": []any{"http://a"}})
+	})
+	res, err := client.Call(map[string]any{"type": "session:urls:get", "sessionId": "A"}, "session:urls", 3*time.Second)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if urls, _ := res["urls"].([]any); len(urls) != 1 || urls[0] != "http://a" {
+		t.Fatalf("urls = %v, want A's", res["urls"])
+	}
+}
+
+// A fork asks about the source session and is answered with the copy, so session:created
+// must not be held to the id in the request.
+func TestCallAcceptsTheForksNewSession(t *testing.T) {
+	newFakeDaemon(t, func(req map[string]any, send func(map[string]any)) {
+		send(map[string]any{"type": "session:created", "session": map[string]any{"id": "copy"}})
+	})
+	res, err := client.Call(
+		map[string]any{"type": "session:fork", "sessionId": "source", "cliSessionId": "cli"},
+		"session:created", 3*time.Second,
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	sm, _ := res["session"].(map[string]any)
+	if id, _ := sm["id"].(string); id != "copy" {
+		t.Fatalf("fork answered with %q, want the new session", id)
+	}
+}

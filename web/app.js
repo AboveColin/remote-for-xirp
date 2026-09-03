@@ -1427,7 +1427,6 @@ async function refreshList() {
   }
   if (state.view === 'projects') renderFolders();
   else if (state.view === 'list') renderList();
-  refreshApprovals();
 }
 
 // Features that are modules rather than core. Where the edition lacks one, this removes
@@ -1798,11 +1797,11 @@ el('refresh').addEventListener('click', () => {
 
 // ---- approvals ----
 //
-// The daemon only holds a permission request open for 500ms before falling
-// through to the agent's own dialog (permissionService.waitForDecision caps its
-// wait at Math.min(timeout, 500)). So this block is almost always empty and is
-// not a remote-approval workflow; it renders only when a request happens to be
-// live, and stays out of the way otherwise.
+// The daemon holds a permission request open for Math.min(timeout, 500) ms before the
+// agent's own dialog takes over, so a poll finds an empty queue nearly every time. This
+// used to run on every five-second list refresh, which was about 720 daemon calls an
+// hour to learn nothing. It runs when a session opens and when the event stream says a
+// request appeared, which is the only moment one exists.
 
 async function refreshApprovals() {
   const box = el('approvals');
@@ -1898,7 +1897,8 @@ function openSession(id) {
   // transcript 0.43s. Git is fetched once per open, not on every poll.
   refreshDetail(true)
     .then(() => refreshGit(id))
-    .then(() => refreshExtras(id));
+    .then(() => refreshExtras(id))
+    .then(refreshApprovals);
 }
 
 el('back').addEventListener('click', () => {
