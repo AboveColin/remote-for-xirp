@@ -11,6 +11,10 @@
 
 const LIST_POLL_MS = 5000;
 const DETAIL_POLL_MS = 4000;
+// While the event stream is up, the poll is only a net under a missed frame, so it runs
+// at a rate that costs a sleeping phone nothing.
+const LIST_POLL_LIVE_MS = 30000;
+const DETAIL_POLL_LIVE_MS = 30000;
 
 // The daemon's own ACTIVE_SESSION_STATUSES, copied rather than guessed. The two that
 // were missing are the two that matter: `finished` is where a turn lands when nobody is
@@ -181,6 +185,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
 let state = {
   view: 'login',
   loaded: false,
+  streamLive: false,
   filter: settings.filter,
   sessions: [],
   sessionId: null,
@@ -225,9 +230,85 @@ function startPolling() {
   state.timer = null;
   if (document.hidden) return;
   const view = state.view;
-  if (view === 'projects' || view === 'list') state.timer = setInterval(refreshList, LIST_POLL_MS);
-  else if (view === 'detail') state.timer = setInterval(refreshDetail, DETAIL_POLL_MS);
+  const list = state.streamLive ? LIST_POLL_LIVE_MS : LIST_POLL_MS;
+  const detail = state.streamLive ? DETAIL_POLL_LIVE_MS : DETAIL_POLL_MS;
+  if (view === 'projects' || view === 'list') state.timer = setInterval(refreshList, list);
+  else if (view === 'detail') state.timer = setInterval(refreshDetail, detail);
   else if (view === 'machines') state.timer = setInterval(renderMachines, 15000);
+}
+
+// ---- live updates ----
+//
+// The bridge follows the daemon's broadcasts, so it can say what changed instead of this
+// asking every five seconds. An event names what moved and carries none of it: the app
+// re-reads the endpoint, which costs the daemon nothing now.
+//
+// Only the machine serving this page gets a stream. EventSource cannot set a header, so
+// a machine reached cross-origin with an access key would need that key in the URL, and
+// the pairing design keeps it out of URLs on purpose. Those keep polling.
+
+let stream = null;
+
+function connectEvents() {
+  disconnectEvents();
+  if (!('EventSource' in window) || document.hidden) return;
+  const host = activeHost();
+  if (host.url) return;
+
+  stream = new EventSource('/api/events');
+  stream.onopen = () => {
+    state.streamLive = true;
+    startPolling();
+  };
+  stream.onmessage = (e) => {
+    try {
+      noteChange(JSON.parse(e.data));
+    } catch {
+      // A frame this version does not understand is not worth a broken screen.
+    }
+  };
+  stream.onerror = () => {
+    // EventSource reconnects on its own. Until it does, the faster poll carries.
+    state.streamLive = false;
+    startPolling();
+  };
+}
+
+function disconnectEvents() {
+  if (stream) stream.close();
+  stream = null;
+  state.streamLive = false;
+}
+
+// Starting one session touches several rows, so frames arrive in bursts. Collect what
+// moved, then read once. A session's own change is kept per id, so the screen showing one
+// session does not re-read it because a different one moved.
+let changeTimer = null;
+const moved = new Set();
+
+function noteChange(c) {
+  moved.add(c.kind === 'session' && c.id ? `session:${c.id}` : c.kind);
+  clearTimeout(changeTimer);
+  changeTimer = setTimeout(applyChanges, 150);
+}
+
+function applyChanges() {
+  const kinds = new Set(moved);
+  moved.clear();
+  if (kinds.has('permissions')) refreshApprovals();
+  if (kinds.has('restorable') && state.view === 'machines') refreshRestorable();
+
+  // Any session or project moving changes a list. The open session's own row, or a bulk
+  // change where the mover is not named, changes the screen showing it.
+  const anySession = [...kinds].some((k) => k.startsWith('session') || k === 'projects');
+  const thisSession = kinds.has(`session:${state.sessionId}`) || kinds.has('sessions');
+  if (state.view === 'projects' || state.view === 'list') {
+    if (anySession) refreshList();
+  } else if (state.view === 'detail') {
+    if (thisSession) refreshDetail();
+  } else if (state.view === 'machines') {
+    if (anySession) renderMachines();
+  }
 }
 
 function show(view) {
@@ -1206,6 +1287,7 @@ async function renderMachines() {
 function openMachine(id) {
   activeMachineId = id;
   saveMachines();
+  connectEvents();
   state.sessions = [];
   state.project = null;
   el('projects-title').textContent = activeHost().name;
@@ -2580,6 +2662,7 @@ async function boot() {
   }
   show('machines');
   renderMachines();
+  connectEvents();
   // Warm the session list for the active machine so opening it is instant, and so a
   // 401 surfaces as the login gate rather than as an empty folder list.
   try {
@@ -2598,12 +2681,15 @@ async function boot() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
-    // Backgrounded: stop asking. Whatever changed will be fetched on return.
+    // Backgrounded: stop asking, and let go of the stream. Whatever changed will be
+    // fetched on return.
+    disconnectEvents();
     startPolling();
     if (paneTimer) clearInterval(paneTimer);
     paneTimer = null;
     return;
   }
+  connectEvents();
   // Back in front: catch up once immediately, then resume the interval.
   if (state.view === 'machines') renderMachines();
   if (state.view === 'projects' || state.view === 'list') refreshList();
