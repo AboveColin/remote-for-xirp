@@ -2323,6 +2323,52 @@ label {
   color: var(--danger);
 }
 
+/* A file input takes none of the app's input styling, so it gets its own. Dashed,
+   because it is a drop target in spirit even where a phone has no drag. */
+.sheet-card input[type="file"] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-hi);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13.5px;
+}
+.sheet-card input[type="file"]::file-selector-button {
+  margin-right: 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 550;
+}
+
+/* ---- not live ----
+ *
+ * A list that is not current has to say so where it cannot be missed. The stamp is the
+ * whole point: stale data without one is the mistake this app exists to avoid.
+ */
+
+.stale-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+  color: var(--text);
+  font-size: 13.5px;
+}
+.stale-note .ico {
+  color: var(--warn);
+}
+
 /* ---- toast ---- */
 
 /* Errors arrive as whatever the daemon said, and it says a lot: a rejected query comes

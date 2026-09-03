@@ -81,6 +81,21 @@ func newFakeDaemon(t *testing.T, r reply) *fakeDaemon {
 	return f
 }
 
+// waitFor gives a condition a moment to become true. `session:message` is
+// fire-and-forget, so a handler using it returns while the frame is still on the wire,
+// and a test that looks immediately is racing the fake's own read.
+func waitFor(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ok() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
 // countOf reports how many times the fake was asked for one request type.
 func (f *fakeDaemon) countOf(typ string) int {
 	f.mu.Lock()
