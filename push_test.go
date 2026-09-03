@@ -21,8 +21,8 @@ func bodyFor(t *testing.T, events []pushEvent, id string) string {
 func TestFinishedTurnIsWorthANotification(t *testing.T) {
 	names := map[string]string{"p1": "webapp"}
 	prev := map[string]string{"s1": "running"}
-	sessions := []any{
-		map[string]any{"id": "s1", "name": "Fix the flake", "status": "finished", "projectId": "p1"},
+	sessions := []map[string]any{
+		{"id": "s1", "name": "Fix the flake", "status": "finished", "projectId": "p1"},
 	}
 
 	events, now := statusEvents(sessions, names, prev)
@@ -46,16 +46,16 @@ func TestStatusEventsRules(t *testing.T) {
 		"done": "running", "gone": "running", "broke": "running",
 		"asks": "running", "child": "running", "watched": "running", "same": "running",
 	}
-	sessions := []any{
-		map[string]any{"id": "done", "name": "done", "status": "finished", "projectId": "p1"},
-		map[string]any{"id": "gone", "name": "gone", "status": "completed", "projectId": "p1"},
-		map[string]any{"id": "broke", "name": "broke", "status": "failed", "projectId": "p1"},
-		map[string]any{"id": "asks", "name": "asks", "status": "waiting", "projectId": "p1", "waitingReason": "needs your answer"},
+	sessions := []map[string]any{
+		{"id": "done", "name": "done", "status": "finished", "projectId": "p1"},
+		{"id": "gone", "name": "gone", "status": "completed", "projectId": "p1"},
+		{"id": "broke", "name": "broke", "status": "failed", "projectId": "p1"},
+		{"id": "asks", "name": "asks", "status": "waiting", "projectId": "p1", "waitingReason": "needs your answer"},
 		// A child waiting on its parent is not something a person can act on.
-		map[string]any{"id": "child", "name": "child", "status": "waiting_on_parent", "projectId": "p1"},
+		{"id": "child", "name": "child", "status": "waiting_on_parent", "projectId": "p1"},
 		// `idle` is the same turn end as `finished`, but with someone at the desk.
-		map[string]any{"id": "watched", "name": "watched", "status": "idle", "projectId": "p1"},
-		map[string]any{"id": "same", "name": "same", "status": "running", "projectId": "p1"},
+		{"id": "watched", "name": "watched", "status": "idle", "projectId": "p1"},
+		{"id": "same", "name": "same", "status": "running", "projectId": "p1"},
 	}
 
 	events, _ := statusEvents(sessions, names, prev)
@@ -82,9 +82,9 @@ func TestStatusEventsRules(t *testing.T) {
 // The first pass has nothing to compare against, so it must stay quiet rather than
 // announce every session that finished hours ago.
 func TestFirstPassIsQuiet(t *testing.T) {
-	sessions := []any{
-		map[string]any{"id": "s1", "name": "old", "status": "completed", "projectId": "p1"},
-		map[string]any{"id": "s2", "name": "older", "status": "failed", "projectId": "p1"},
+	sessions := []map[string]any{
+		{"id": "s1", "name": "old", "status": "completed", "projectId": "p1"},
+		{"id": "s2", "name": "older", "status": "failed", "projectId": "p1"},
 	}
 	events, now := statusEvents(sessions, map[string]string{}, map[string]string{})
 	if len(events) != 0 {
@@ -99,7 +99,7 @@ func TestFirstPassIsQuiet(t *testing.T) {
 // process, and an unknown project must not read as "Finished in ".
 func TestStatusEventsForgetsAndPlaces(t *testing.T) {
 	prev := map[string]string{"s1": "running", "vanished": "running"}
-	sessions := []any{map[string]any{"id": "s1", "status": "finished"}}
+	sessions := []map[string]any{{"id": "s1", "status": "finished"}}
 	events, now := statusEvents(sessions, map[string]string{}, prev)
 	if _, still := now["vanished"]; still {
 		t.Fatal("a session the daemon no longer lists is still remembered")

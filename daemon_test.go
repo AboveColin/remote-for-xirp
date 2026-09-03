@@ -70,6 +70,7 @@ func newFakeDaemon(t *testing.T, r reply) *fakeDaemon {
 	prevClient := client
 	client = NewClient()
 	resetCaches()
+	warmStore()
 	t.Cleanup(func() {
 		client.Close()
 		client = prevClient
@@ -93,7 +94,7 @@ func (f *fakeDaemon) countOf(typ string) int {
 	return n
 }
 
-// resetCaches empties everything the handlers memoise, so one test's daemon answers
+// resetCaches empties everything the handlers remember, so one test's daemon answers
 // cannot be served to the next.
 func resetCaches() {
 	tmuxMu.Lock()
@@ -102,12 +103,36 @@ func resetCaches() {
 	modulesMu.Lock()
 	modulesList, modulesAt = nil, time.Time{}
 	modulesMu.Unlock()
-	projectMu.Lock()
-	pcache = projectCache{}
-	projectMu.Unlock()
 	metaMu.Lock()
 	mcache = metaCache{}
 	metaMu.Unlock()
+	live.mu.Lock()
+	live.sessions = map[string]map[string]any{}
+	live.projects = map[string]map[string]any{}
+	live.permissions = map[string]map[string]any{}
+	live.restorable = nil
+	live.syncedAt = time.Time{}
+	live.triedAt = time.Time{}
+	live.drift = 0
+	live.mu.Unlock()
+}
+
+// warmStore marks the store as loaded, so a test that does not care about it is not
+// waiting for three list calls its fake daemon never answers. seedSessions puts rows in.
+func warmStore() {
+	live.mu.Lock()
+	live.syncedAt = time.Now()
+	live.mu.Unlock()
+}
+
+func seedSessions(rows ...map[string]any) {
+	live.mu.Lock()
+	for _, row := range rows {
+		id, _ := row["id"].(string)
+		live.sessions[id] = row
+	}
+	live.syncedAt = time.Now()
+	live.mu.Unlock()
 }
 
 func TestCallReturnsWantedReplyAndSkipsBroadcasts(t *testing.T) {

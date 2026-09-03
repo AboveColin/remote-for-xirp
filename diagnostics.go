@@ -118,6 +118,11 @@ func handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	tm := tmuxStatus()
 	out["tmux"] = map[string]any{"available": tm.Available, "panes": len(tm.Panes), "orphaned": tm.Orphaned}
 	out["modules"] = activeModules()
+	// The store answers the session list from the daemon's broadcasts. `drift` is the
+	// number of rows the last resync had to correct: anything but zero means a broadcast
+	// was missed and the phone was shown something that was not true.
+	out["store"] = live.health()
+	out["daemonCalls"] = client.calls.Load()
 
 	if res, err := client.Call(map[string]any{"type": "db:query-stats"}, "db:query-stats", 10*time.Second); err == nil {
 		if stats, ok := res["stats"].(map[string]any); ok {

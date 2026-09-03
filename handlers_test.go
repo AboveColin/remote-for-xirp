@@ -89,14 +89,6 @@ func TestSwapAgentReturnsTheUpdatedSession(t *testing.T) {
 func TestSessionListForcesAtMostOneTmuxRefresh(t *testing.T) {
 	f := newFakeDaemon(t, func(req map[string]any, send func(map[string]any)) {
 		switch req["type"] {
-		case "sessions:list":
-			send(map[string]any{"type": "sessions:list", "sessions": []any{
-				map[string]any{"id": "a", "status": "running", "tmuxSession": "xirp-a"},
-				map[string]any{"id": "b", "status": "running", "tmuxSession": "xirp-b"},
-				map[string]any{"id": "c", "status": "running", "tmuxSession": "xirp-c"},
-			}})
-		case "projects:list":
-			send(map[string]any{"type": "projects:list", "projects": []any{}})
 		case "tmux:status":
 			send(map[string]any{"type": "tmux:status", "available": true, "sessions": []any{}})
 		case "tmux:orphaned-sessions":
@@ -105,6 +97,11 @@ func TestSessionListForcesAtMostOneTmuxRefresh(t *testing.T) {
 			send(map[string]any{"type": "modules:list", "modules": []any{}})
 		}
 	})
+	seedSessions(
+		map[string]any{"id": "a", "status": "running", "tmuxSession": "xirp-a"},
+		map[string]any{"id": "b", "status": "running", "tmuxSession": "xirp-b"},
+		map[string]any{"id": "c", "status": "running", "tmuxSession": "xirp-c"},
+	)
 	rec := httptest.NewRecorder()
 	handleSessions(rec, httptest.NewRequest("GET", "/api/sessions", nil))
 	if rec.Code != 200 {
@@ -230,16 +227,13 @@ func TestSessionDetailCanSkipTheTranscript(t *testing.T) {
 	}
 }
 
-// The push watcher's goroutine reads projectsCached while HTTP handlers write it. Run
-// under -race, this is the test that says so.
-func TestProjectsCacheIsSafeForConcurrentUse(t *testing.T) {
-	newFakeDaemon(t, func(req map[string]any, send func(map[string]any)) {
-		if req["type"] == "projects:list" {
-			send(map[string]any{"type": "projects:list", "projects": []any{
-				map[string]any{"id": "p1", "name": "webapp", "defaultBranch": "main"},
-			}})
-		}
-	})
+// The push watcher's goroutine, the event stream and every handler read the store at
+// once. Run under -race, this is the test that says so.
+func TestStoreIsSafeForConcurrentUse(t *testing.T) {
+	newFakeDaemon(t, func(req map[string]any, send func(map[string]any)) {})
+	live.mu.Lock()
+	live.projects["p1"] = map[string]any{"id": "p1", "name": "webapp", "defaultBranch": "main"}
+	live.mu.Unlock()
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
@@ -255,8 +249,8 @@ func TestProjectsCacheIsSafeForConcurrentUse(t *testing.T) {
 	}
 	wg.Wait()
 
-	// The base branch moved into the same cache as the names, and the changes screen
-	// compares against it. An empty one silently drops the branch diff.
+	// The changes screen compares against the base branch. An empty one silently drops
+	// the branch diff.
 	if got := projectBase("p1"); got != "main" {
 		t.Fatalf("projectBase = %q, want main", got)
 	}

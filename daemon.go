@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -158,6 +159,10 @@ const poolSize = 6
 // Client is a request/response wrapper over the daemon's WebSocket.
 type Client struct {
 	free chan *conn
+	// calls counts every request sent, which /api/diagnostics reports. It is how you
+	// tell whether this app is asking the daemon for things it already knows: an idle
+	// phone with the store warm should move it by nothing.
+	calls atomic.Int64
 }
 
 func NewClient() *Client {
@@ -236,6 +241,7 @@ func (e timeoutError) Error() string { return "the daemon did not answer with " 
 //     while `session:swap-agent:error` belongs to that one request. Their
 //     responseTypes in `api:describe` say which a call can receive.
 func (c *Client) Call(req map[string]any, wantType string, timeout time.Duration, errTypes ...string) (map[string]any, error) {
+	c.calls.Add(1)
 	cn, err := c.take(timeout)
 	if err != nil {
 		return nil, err
@@ -383,6 +389,7 @@ func (c *Client) Fire(req map[string]any) error {
 
 // CallStream borrows a socket and collects a streaming answer on it.
 func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Duration) ([]map[string]any, error) {
+	c.calls.Add(1)
 	cn, err := c.take(timeout)
 	if err != nil {
 		return nil, err
