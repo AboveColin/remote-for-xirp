@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -70,9 +71,7 @@ func newFakeDaemon(t *testing.T, r reply) *fakeDaemon {
 	client = NewClient()
 	resetCaches()
 	t.Cleanup(func() {
-		client.mu.Lock()
-		client.drop()
-		client.mu.Unlock()
+		client.Close()
 		client = prevClient
 		discoverCreds = prevDiscover
 		f.srv.Close()
@@ -345,4 +344,72 @@ func TestCallAcceptsTheForksNewSession(t *testing.T) {
 	if id, _ := sm["id"].(string); id != "copy" {
 		t.Fatalf("fork answered with %q, want the new session", id)
 	}
+}
+
+// Calls used to queue behind each other, because the whole client was one socket under
+// one mutex: a 30 second branch diff blocked the session list for its full duration.
+// This is the receipt that they now run at once, and that each still gets its own answer.
+func TestPoolRunsCallsAtOnce(t *testing.T) {
+	const each = 250 * time.Millisecond
+	newFakeDaemon(t, func(req map[string]any, send func(map[string]any)) {
+		id, _ := req["sessionId"].(string)
+		time.Sleep(each)
+		send(map[string]any{"type": "session:get", "session": map[string]any{"id": id}})
+	})
+
+	var wg sync.WaitGroup
+	answers := make([]string, poolSize)
+	start := time.Now()
+	for i := 0; i < poolSize; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id := fmt.Sprintf("s%d", i)
+			res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 5*time.Second)
+			if err != nil {
+				t.Errorf("call %d: %v", i, err)
+				return
+			}
+			sm, _ := res["session"].(map[string]any)
+			answers[i], _ = sm["id"].(string)
+		}(i)
+	}
+	wg.Wait()
+	took := time.Since(start)
+
+	for i, got := range answers {
+		if want := fmt.Sprintf("s%d", i); got != want {
+			t.Errorf("call %d answered about %q, want %q", i, got, want)
+		}
+	}
+	// Serialized, this would take poolSize * each. Half of that is a wide margin and
+	// still fails loudly if the pool ever collapses to one socket.
+	if limit := time.Duration(poolSize) * each / 2; took > limit {
+		t.Fatalf("%d calls took %v, over %v: they are not running at once", poolSize, took, limit)
+	}
+}
+
+// Exhaustion has to say how many sockets there are, or the message is a mystery.
+func TestPoolExhaustionNamesTheSize(t *testing.T) {
+	newFakeDaemon(t, func(req map[string]any, send func(map[string]any)) {
+		time.Sleep(2 * time.Second) // never answers in time
+	})
+	var wg sync.WaitGroup
+	for i := 0; i < poolSize; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = client.Call(map[string]any{"type": "session:get", "sessionId": "x"}, "session:get", 1500*time.Millisecond)
+		}()
+	}
+	// Let the pool fill before asking for one more.
+	time.Sleep(300 * time.Millisecond)
+	_, err := client.Call(map[string]any{"type": "sessions:list"}, "sessions:list", 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("want an error when every socket is busy")
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("all %d daemon connections", poolSize)) {
+		t.Fatalf("error %q does not name the pool size", err)
+	}
+	wg.Wait()
 }

@@ -131,43 +131,91 @@ func tokenOfPID(pid string) string {
 	return ""
 }
 
-// Client is a request/response wrapper over the daemon's WebSocket.
+// firstDial keeps the startup log to one line. Six sockets dialing would otherwise say
+// the same thing six times.
+var firstDial sync.Once
+
+// conn is one WebSocket to the daemon, held by one caller at a time.
 //
-// The protocol has no request IDs: a reply is matched only by its `type`. So
-// requests are serialized under a mutex and each waits for the one response
-// type it expects. That caps throughput at one in-flight call, which is far
-// above what a phone UI generates and removes any chance of crossing replies.
-type Client struct {
-	mu    sync.Mutex
-	conn  *websocket.Conn
-	creds Creds
+// The protocol has no request ids: a reply is matched by its type, so two calls sharing
+// a socket would read each other's answers. One caller per socket makes that impossible,
+// and several sockets give several calls at once.
+type conn struct {
+	ws *websocket.Conn
 }
 
-func NewClient() *Client { return &Client{} }
+// poolSize is how many calls can be in flight.
+//
+// One socket under one mutex was the whole client, so every request queued behind every
+// other: a slow branch diff blocked the session list for its full 30 seconds, and the
+// push watcher blocked it every 20. Six is this app's own peak demand, two per open phone
+// for the detail and the pane, plus the push watcher and a resync, and it is the number
+// measured to work: the daemon greeted six authenticated clients at once alongside the
+// desktop app, and answered each on the socket that asked. Sockets dial on first use, so
+// an unused one costs nothing.
+const poolSize = 6
 
-func (c *Client) connect() error {
-	if c.conn != nil {
+// Client is a request/response wrapper over the daemon's WebSocket.
+type Client struct {
+	free chan *conn
+}
+
+func NewClient() *Client {
+	c := &Client{free: make(chan *conn, poolSize)}
+	for i := 0; i < poolSize; i++ {
+		c.free <- &conn{}
+	}
+	return c
+}
+
+// take waits for a free socket. The pool is sized to this app's own concurrency, so
+// exhaustion means something is stuck rather than busy, and the message says how many.
+func (c *Client) take(timeout time.Duration) (*conn, error) {
+	select {
+	case cn := <-c.free:
+		return cn, nil
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("all %d daemon connections were busy for %s", poolSize, timeout)
+	}
+}
+
+// Close drops every idle socket and keeps the pool whole, so a client stays usable.
+func (c *Client) Close() {
+	for i := 0; i < poolSize; i++ {
+		select {
+		case cn := <-c.free:
+			cn.drop()
+			c.free <- cn
+		default:
+			return
+		}
+	}
+}
+
+func (cn *conn) connect() error {
+	if cn.ws != nil {
 		return nil
 	}
+	// Rediscovered per dial rather than cached: the token is minted per app launch and
+	// the port changes with it, so a cached pair is stale exactly when it matters.
 	creds, err := discoverCreds()
 	if err != nil {
 		return err
 	}
 	url := fmt.Sprintf("ws://127.0.0.1:%s/?token=%s", creds.Port, creds.Token)
-	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	ws, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		return fmt.Errorf("dial daemon on :%s: %w", creds.Port, err)
 	}
-	c.conn = conn
-	c.creds = creds
-	log.Printf("connected to Xirp daemon on 127.0.0.1:%s", creds.Port)
+	cn.ws = ws
+	firstDial.Do(func() { log.Printf("connected to Xirp daemon on 127.0.0.1:%s", creds.Port) })
 	return nil
 }
 
-func (c *Client) drop() {
-	if c.conn != nil {
-		c.conn.Close()
-		c.conn = nil
+func (cn *conn) drop() {
+	if cn.ws != nil {
+		cn.ws.Close()
+		cn.ws = nil
 	}
 }
 
@@ -188,33 +236,36 @@ func (e timeoutError) Error() string { return "the daemon did not answer with " 
 //     while `session:swap-agent:error` belongs to that one request. Their
 //     responseTypes in `api:describe` say which a call can receive.
 func (c *Client) Call(req map[string]any, wantType string, timeout time.Duration, errTypes ...string) (map[string]any, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	cn, err := c.take(timeout)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { c.free <- cn }()
 
-	res, err := c.call(req, wantType, timeout, errTypes...)
+	res, err := cn.call(req, wantType, timeout, errTypes...)
 	var te timeoutError
-	if err != nil && c.conn == nil && !errors.As(err, &te) {
+	if err != nil && cn.ws == nil && !errors.As(err, &te) {
 		// The connection broke (app restarted, token rotated). Retry once so a
 		// restart of Xirp doesn't require a restart of the bridge.
-		if err2 := c.connect(); err2 != nil {
+		if err2 := cn.connect(); err2 != nil {
 			return nil, err2
 		}
-		return c.call(req, wantType, timeout, errTypes...)
+		return cn.call(req, wantType, timeout, errTypes...)
 	}
 	return res, err
 }
 
-func (c *Client) call(req map[string]any, wantType string, timeout time.Duration, errTypes ...string) (map[string]any, error) {
-	if err := c.connect(); err != nil {
+func (cn *conn) call(req map[string]any, wantType string, timeout time.Duration, errTypes ...string) (map[string]any, error) {
+	if err := cn.connect(); err != nil {
 		return nil, err
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	c.conn.SetWriteDeadline(time.Now().Add(timeout))
-	if err := c.conn.WriteMessage(websocket.TextMessage, body); err != nil {
-		c.drop()
+	cn.ws.SetWriteDeadline(time.Now().Add(timeout))
+	if err := cn.ws.WriteMessage(websocket.TextMessage, body); err != nil {
+		cn.drop()
 		return nil, fmt.Errorf("write %s: %w", req["type"], err)
 	}
 	if wantType == "" {
@@ -227,13 +278,13 @@ func (c *Client) call(req map[string]any, wantType string, timeout time.Duration
 		// be on its way, and the next call waiting for that same type would read it as
 		// its own. One redial costs a discover plus a dial.
 		if time.Now().After(deadline) {
-			c.drop()
+			cn.drop()
 			return nil, timeoutError{want: wantType}
 		}
-		c.conn.SetReadDeadline(deadline)
-		_, raw, err := c.conn.ReadMessage()
+		cn.ws.SetReadDeadline(deadline)
+		_, raw, err := cn.ws.ReadMessage()
 		if err != nil {
-			c.drop()
+			cn.drop()
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				return nil, timeoutError{want: wantType}
 			}
@@ -330,7 +381,17 @@ func (c *Client) Fire(req map[string]any) error {
 	return err
 }
 
-// CallStream collects the daemon's streaming replies.
+// CallStream borrows a socket and collects a streaming answer on it.
+func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Duration) ([]map[string]any, error) {
+	cn, err := c.take(timeout)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { c.free <- cn }()
+	return cn.callStream(req, wantType, timeout)
+}
+
+// callStream collects the daemon's streaming replies.
 //
 // Session search is the reason this is subtle. It answers from three independent
 // sources and each one signals its own completion: `metadata` and `messages`
@@ -345,21 +406,18 @@ func (c *Client) Fire(req map[string]any) error {
 //
 // Reaching the overall deadline returns what arrived rather than an error —
 // partial results are useful, an error page is not.
-func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Duration) ([]map[string]any, error) {
+func (cn *conn) callStream(req map[string]any, wantType string, timeout time.Duration) ([]map[string]any, error) {
 	const idleGap = 600 * time.Millisecond
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if err := c.connect(); err != nil {
+	if err := cn.connect(); err != nil {
 		return nil, err
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	c.conn.SetWriteDeadline(time.Now().Add(timeout))
-	if err := c.conn.WriteMessage(websocket.TextMessage, body); err != nil {
-		c.drop()
+	cn.ws.SetWriteDeadline(time.Now().Add(timeout))
+	if err := cn.ws.WriteMessage(websocket.TextMessage, body); err != nil {
+		cn.drop()
 		return nil, fmt.Errorf("write %s: %w", req["type"], err)
 	}
 
@@ -393,8 +451,8 @@ func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Du
 		if readBy.After(deadline) {
 			readBy = deadline
 		}
-		c.conn.SetReadDeadline(readBy)
-		_, raw, err := c.conn.ReadMessage()
+		cn.ws.SetReadDeadline(readBy)
+		_, raw, err := cn.ws.ReadMessage()
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				// Quiet on the wire. Finished if every source that spoke is done;
@@ -405,16 +463,16 @@ func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Du
 					// possibly desynchronised connection, drop it and let the next
 					// call redial — that costs one dial and removes a class of bug
 					// that would show up later as garbled replies.
-					c.drop()
+					cn.drop()
 					return frames, nil
 				}
 				continue
 			}
 			if len(frames) > 0 {
-				c.drop()
+				cn.drop()
 				return frames, nil
 			}
-			c.drop()
+			cn.drop()
 			return nil, fmt.Errorf("read while waiting for %s: %w", wantType, err)
 		}
 		var msg map[string]any
@@ -432,7 +490,7 @@ func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Du
 			done[source] = true
 		}
 	}
-	c.drop()
+	cn.drop()
 	return frames, nil
 }
 
