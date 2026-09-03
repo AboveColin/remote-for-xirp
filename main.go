@@ -354,6 +354,8 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 		sessionRename(w, r, id)
 	case "file":
 		sessionFile(w, r, id)
+	case "upload":
+		sessionUpload(w, r, id)
 	default:
 		writeJSON(w, 404, map[string]any{"error": "unknown action " + action})
 	}

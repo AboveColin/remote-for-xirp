@@ -74,6 +74,18 @@ func sessionPane(w http.ResponseWriter, r *http.Request, id string) {
 // Only an allowlist of key names is accepted. Passing arbitrary strings through to
 // `tmux send-keys` would let anything type anything into any pane.
 var allowedKeys = map[string]string{
+	// The digits answer an agent's own permission prompt, which draws itself as a
+	// numbered menu. They are literal characters, so the allowlist keeps its meaning:
+	// nothing arbitrary reaches send-keys.
+	"1":      "1",
+	"2":      "2",
+	"3":      "3",
+	"4":      "4",
+	"5":      "5",
+	"6":      "6",
+	"7":      "7",
+	"8":      "8",
+	"9":      "9",
 	"escape": "Escape",
 	"tab":    "Tab",
 	"up":     "Up",

@@ -160,6 +160,10 @@
         <button class="chip chip-on" data-filter="active">Active</button>
         <button class="chip" data-filter="all">All</button>
       </nav>
+      <div id="stale-note" class="stale-note" hidden>
+        <svg class="ico ico-sm"><use href="#i-alert" /></svg>
+        <span id="stale-text"></span>
+      </div>
       <div id="approvals" class="approvals" hidden></div>
       <div id="folders" class="folders"></div>
       <div id="list-empty" class="blank" hidden>
@@ -488,6 +492,14 @@
           <button id="retitle-go" class="btn">Auto-title</button>
         </div>
 
+        <h3 class="sheet-h">Send a file</h3>
+        <p class="subdued setting-hint">
+          Writes it to a temp folder on the Mac, then puts the path in the agent's input
+          without sending it, so you can say what to do with it.
+        </p>
+        <input id="attach-file" type="file" />
+        <p id="attach-note" class="subdued setting-hint"></p>
+
         <h3 class="sheet-h">Fork this conversation</h3>
         <p class="subdued setting-hint">
           Keeps this session as it is and starts a copy from the same history. Use it when
@@ -522,6 +534,11 @@
 
           <label for="create-model">Model <span class="subdued">(optional)</span></label>
           <select id="create-model"></select>
+
+          <label for="create-prompt" id="create-prompt-label" hidden>
+            Start from a saved prompt <span class="subdued">(optional)</span>
+          </label>
+          <select id="create-prompt" hidden></select>
 
           <label for="create-goal">Goal</label>
           <textarea id="create-goal" rows="3" placeholder="What should it do?"></textarea>

@@ -186,6 +186,7 @@ let state = {
   view: 'login',
   loaded: false,
   streamLive: false,
+  staleAt: null,
   filter: settings.filter,
   sessions: [],
   sessionId: null,
@@ -842,6 +843,27 @@ async function handover(path, body, label, btn) {
   }
 }
 
+// A phone can send what a desk cannot: a screenshot of the bug, a photo of a whiteboard.
+// The bridge writes it to a temp folder on the Mac and types the path into the agent's
+// input without sending it, so the message is still yours to write.
+el('attach-file').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file || !state.sessionId) return;
+  const note = el('attach-note');
+  note.textContent = `Sending ${file.name}…`;
+  try {
+    const res = await api(
+      `/api/sessions/${encodeURIComponent(state.sessionId)}/upload?name=${encodeURIComponent(file.name)}`,
+      { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } }
+    );
+    note.textContent = `Its path is in the agent's input: ${res.path}`;
+    toast('Sent, unsent: the path is in the input');
+  } catch (err) {
+    note.textContent = err.message;
+  }
+  e.target.value = '';
+});
+
 el('open-handover').addEventListener('click', openHandover);
 el('handover-close').addEventListener('click', closeHandover);
 el('handover-sheet').addEventListener('click', (e) => {
@@ -1288,6 +1310,7 @@ function openMachine(id) {
   activeMachineId = id;
   saveMachines();
   connectEvents();
+  paintStale(null);
   state.sessions = [];
   state.project = null;
   el('projects-title').textContent = activeHost().name;
@@ -1373,9 +1396,11 @@ function renderFolders() {
   el('list-empty-hint').textContent = active
     ? 'Start one with +, or switch to All to see the sessions that have finished.'
     : 'Start one with +.';
-  el('list-foot').textContent = state.lastError
-    ? state.lastError
-    : `${shown.length} of ${state.sessions.length} sessions · ${ordered.length} projects`;
+  el('list-foot').textContent = state.staleAt
+    ? `not live since ${new Date(state.staleAt).toLocaleTimeString()} · ${state.lastError || ''}`
+    : state.lastError
+      ? state.lastError
+      : `${shown.length} of ${state.sessions.length} sessions · ${ordered.length} projects`;
 }
 
 function openProject(project) {
@@ -1491,9 +1516,49 @@ function renderList() {
   el('sessions-foot').textContent = `${shown.length} ${shown.length === 1 ? 'session' : 'sessions'} · ${state.project}`;
 }
 
+// The last list that arrived, per machine. A Mac asleep or off the network used to give
+// an error page; the list it had is more use than that, as long as the screen says when
+// it was true. Nothing else is cached: a session list that pretends to be live is the one
+// thing this app must never show.
+function lastListKey() {
+  const host = activeHost();
+  return `xr.last.${host.url || 'local'}`;
+}
+
+function rememberList(sessions) {
+  try {
+    localStorage.setItem(lastListKey(), JSON.stringify({ at: Date.now(), sessions }));
+  } catch {
+    // A full quota costs the fallback, not the app.
+  }
+}
+
+function recallList() {
+  try {
+    const held = JSON.parse(localStorage.getItem(lastListKey()) || 'null');
+    return held && Array.isArray(held.sessions) ? held : null;
+  } catch {
+    return null;
+  }
+}
+
+function paintStale(at, why) {
+  const note = el('stale-note');
+  if (!at) {
+    note.hidden = true;
+    state.staleAt = null;
+    return;
+  }
+  state.staleAt = at;
+  const when = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  el('stale-text').textContent = `${activeHost().name} is not answering. This is how it looked at ${when}.`;
+  note.title = why || '';
+  note.hidden = false;
+}
+
 async function refreshList() {
-  // With a query on screen the 5s poll would overwrite the results with the
-  // session list a moment after they appeared.
+  // With a query on screen the poll would overwrite the results with the session list a
+  // moment after they appeared.
   if (state.query) return;
   try {
     const body = await api('/api/sessions');
@@ -1501,11 +1566,19 @@ async function refreshList() {
     state.loaded = true;
     noteModules(body);
     state.lastError = null;
+    paintStale(null);
+    rememberList(state.sessions);
     setLink(true);
   } catch (e) {
     if (e.message === 'unauthorized') return;
     state.lastError = e.message;
     setLink(false, e.message);
+    const held = recallList();
+    if (held) {
+      state.sessions = held.sessions;
+      state.loaded = true;
+      paintStale(held.at, e.message);
+    }
   }
   if (state.view === 'projects') renderFolders();
   else if (state.view === 'list') renderList();
@@ -1645,11 +1718,52 @@ async function openCreateSheet() {
       asel.append(o);
     }
     await loadModels();
+    await loadCreatePrompts();
   } catch (e) {
     err.textContent = e.message;
     err.hidden = false;
   }
 }
+
+// The goal field is where a saved prompt belongs, and typing a paragraph of one with
+// thumbs is the thing this app should never ask for.
+async function loadCreatePrompts() {
+  const sel = el('create-prompt');
+  const label = el('create-prompt-label');
+  if (!state.modules || !state.modules.includes('saved-prompts')) {
+    sel.hidden = label.hidden = true;
+    return;
+  }
+  let prompts = [];
+  try {
+    ({ prompts } = await api('/api/prompts'));
+  } catch {
+    prompts = [];
+  }
+  if (!prompts.length) {
+    sel.hidden = label.hidden = true;
+    return;
+  }
+  sel.replaceChildren();
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = 'write it below';
+  sel.append(none);
+  for (const p of prompts) {
+    const o = document.createElement('option');
+    o.value = p.prompt;
+    o.textContent = p.name;
+    sel.append(o);
+  }
+  sel.hidden = label.hidden = false;
+}
+
+el('create-prompt').addEventListener('change', (e) => {
+  if (!e.target.value) return;
+  const goal = el('create-goal');
+  goal.value = e.target.value;
+  goal.focus();
+});
 
 async function loadModels() {
   const agent = el('create-agent').value;
@@ -1885,41 +1999,71 @@ el('refresh').addEventListener('click', () => {
 // hour to learn nothing. It runs when a session opens and when the event stream says a
 // request appeared, which is the only moment one exists.
 
+// An agent draws its own permission prompt as a numbered menu, and about half a second
+// after the request arrives that dialog is the only thing that can answer it. This reads
+// the numbers back out of the pane without knowing what any of them mean, so it works for
+// any agent that draws one and offers nothing at all for any agent that does not.
+//
+// It only ever runs while the daemon has said a request is live for that session, which
+// is what stops it offering buttons for a numbered list the agent merely printed.
+function paneMenu(paneText) {
+  const plain = String(paneText).replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '');
+  const found = new Map();
+  for (const line of plain.split('\n').slice(-24)) {
+    const m = /^[\s>❯*|│]*\(?([1-9])[.)]\s+(\S.*?)\s*$/.exec(line);
+    // A TUI draws its menu inside a box, so the label arrives with the right-hand
+    // border and the padding in front of it.
+    if (m && !found.has(m[1])) found.set(m[1], m[2].replace(/[\s│|┃╎┆]+$/, '').slice(0, 60));
+  }
+  // A menu numbers itself from one with no gaps. One such line is a list item; two in a
+  // row is a choice.
+  const options = [];
+  for (let n = 1; found.has(String(n)); n++) options.push({ key: String(n), label: found.get(String(n)) });
+  return options.length >= 2 ? options : [];
+}
+
 async function refreshApprovals() {
   const box = el('approvals');
   let requests = [];
   try {
-    const body = await api('/api/permissions');
-    requests = body.requests || [];
+    ({ requests } = await api('/api/permissions'));
   } catch {
     box.hidden = true;
     return;
   }
-  if (!requests.length) {
+  if (!requests || !requests.length) {
     box.hidden = true;
     return;
   }
+  const head = document.createElement('h2');
+  head.textContent = 'Waiting on you';
+  box.replaceChildren(head);
   box.hidden = false;
-  box.innerHTML = '<h2>Waiting on you</h2>';
-  for (const r of requests) {
-    const wrap = document.createElement('div');
-    wrap.className = 'approval';
+  for (const r of requests) box.append(await approvalCard(r));
+}
 
-    const tool = document.createElement('div');
-    tool.className = 'approval-tool';
-    tool.textContent = r.toolName || 'permission request';
-    wrap.append(tool);
+async function approvalCard(r) {
+  const wrap = document.createElement('div');
+  wrap.className = 'approval';
 
-    if (r.toolInput) {
-      const inp = document.createElement('div');
-      inp.className = 'approval-input';
-      inp.textContent =
-        typeof r.toolInput === 'string' ? r.toolInput : JSON.stringify(r.toolInput, null, 1);
-      wrap.append(inp);
-    }
+  const tool = document.createElement('div');
+  tool.className = 'approval-tool';
+  tool.textContent = r.toolName || 'permission request';
+  wrap.append(tool);
 
-    const actions = document.createElement('div');
-    actions.className = 'approval-actions';
+  if (r.toolInput) {
+    const inp = document.createElement('div');
+    inp.className = 'approval-input';
+    inp.textContent = typeof r.toolInput === 'string' ? r.toolInput : JSON.stringify(r.toolInput, null, 1);
+    wrap.append(inp);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'approval-actions';
+  wrap.append(actions);
+
+  if (!r.expired) {
+    // The daemon still holds it, so it can still be answered through the API.
     for (const behavior of ['allow', 'deny']) {
       const btn = document.createElement('button');
       btn.className = `btn ${behavior === 'allow' ? 'btn-accent' : 'btn-deny'}`;
@@ -1930,7 +2074,7 @@ async function refreshApprovals() {
             method: 'POST',
             body: JSON.stringify({ behavior }),
           });
-          toast(`${behavior === 'allow' ? 'Allowed' : 'Denied'}`);
+          toast(behavior === 'allow' ? 'Allowed' : 'Denied');
         } catch (e) {
           toast(e.message);
         }
@@ -1938,9 +2082,51 @@ async function refreshApprovals() {
       };
       actions.append(btn);
     }
-    wrap.append(actions);
-    box.append(wrap);
+    return wrap;
   }
+
+  // Past the grace period. Say so plainly, then offer whatever the agent is asking in
+  // its own terminal.
+  const note = document.createElement('p');
+  note.className = 'subdued setting-hint';
+  note.textContent = 'Xirp held this for half a second, so the agent is asking in its own terminal now.';
+  wrap.insertBefore(note, actions);
+
+  let text = '';
+  if (r.sessionId) {
+    const pane = await api(`/api/sessions/${encodeURIComponent(r.sessionId)}/pane?lines=40`).catch(() => ({}));
+    text = pane.text || '';
+  }
+  for (const option of paneMenu(text)) {
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.textContent = `${option.key}. ${option.label}`;
+    btn.onclick = async () => {
+      try {
+        await api(`/api/sessions/${encodeURIComponent(r.sessionId)}/keys?key=${option.key}`, { method: 'POST' });
+        toast(`Answered ${option.key}`);
+        setTimeout(refreshApprovals, 600);
+        setTimeout(refreshPane, 400);
+      } catch (e) {
+        toast(e.message);
+      }
+    };
+    actions.append(btn);
+  }
+
+  if (r.sessionId) {
+    const open = document.createElement('button');
+    open.className = 'btn';
+    open.textContent = 'Open the terminal';
+    open.onclick = () => {
+      settings.mode = 'terminal';
+      saveSettings();
+      paintSettings();
+      openSession(r.sessionId);
+    };
+    actions.append(open);
+  }
+  return wrap;
 }
 
 // ---- session detail ----
