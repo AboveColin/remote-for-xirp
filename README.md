@@ -114,6 +114,13 @@ Full threat model and how to report something: [`SECURITY.md`](SECURITY.md).
 | [`docs/protocol.md`](docs/protocol.md) | How it talks to the Xirp daemon, and four traps in that API that cost real debugging time. |
 | [`docs/proxy.md`](docs/proxy.md) | Putting it behind a reverse proxy, including the case where the Mac is a laptop that moves. |
 
+## Supporting the project
+
+This project is free and stays free. If it is useful to you, you can support its
+development through [GitHub Sponsors](https://github.com/sponsors/AboveColin).
+Sponsorship is voluntary and unlocks nothing: every feature, fix and security
+update ships in the public release.
+
 ## License
 
 [MIT](LICENSE). Issues and pull requests welcome.
