@@ -26,7 +26,10 @@ import (
 // of those subtly wrong produces messages that silently never arrive.
 
 const (
-	pushPollInterval = 20 * time.Second
+	// pushSweep is the safety net, not the trigger. The store tells the watcher when a
+	// session moved, so this only catches a change that arrived while nothing was
+	// subscribed.
+	pushSweep = time.Minute
 	// A subscription that keeps failing is dead — the browser was uninstalled, or the
 	// endpoint was rotated. Dropped after this many consecutive failures rather than
 	// retried forever.
@@ -52,10 +55,10 @@ var (
 	pushMu   sync.Mutex
 	pushData pushState
 	// Last status seen per session, so a notification fires on a change rather than on
-	// every poll. Populated on the first pass without notifying, otherwise starting the
-	// service would announce every session that had already finished.
+	// every poll. Empty until the first pass, which is what keeps that pass quiet:
+	// otherwise starting the service would announce every session that had already
+	// finished.
 	lastStatus  = map[string]string{}
-	pushPrimed  bool
 	pushStarted bool
 )
 
@@ -302,24 +305,38 @@ func shortEndpoint(e string) string {
 
 // startPushWatcher notices sessions finishing and asking for input.
 //
-// It watches statuses rather than transcripts: `completed` and `failed` are the events
-// worth a buzz, and `waiting` means the agent wants something from you. The first pass
-// only records the current state — otherwise starting the service would announce every
-// session that finished hours ago.
+// It watches statuses rather than transcripts: `finished` is the turn ending with nobody
+// at the desk, `completed` and `failed` end the session, and `waiting` means the agent
+// wants something from you.
+//
+// It reads the store rather than the daemon, so this costs nothing to run and fires when
+// the daemon says a session moved instead of up to 20 seconds later.
 func startPushWatcher() {
 	if pushStarted {
 		return
 	}
 	pushStarted = true
+	changes, _ := live.subscribe()
 	go func() {
+		sweep := time.Tick(pushSweep)
 		for {
-			time.Sleep(pushPollInterval)
+			select {
+			case _, open := <-changes:
+				if !open {
+					// Dropped for falling behind, which cannot happen at this rate, but
+					// a watcher that stops watching would silence notifications.
+					changes, _ = live.subscribe()
+					continue
+				}
+			case <-sweep:
+			}
 			pushMu.Lock()
 			subs := len(pushData.Subs)
 			pushMu.Unlock()
 			if subs == 0 {
-				// Nothing subscribed: do not ask the daemon anything. This is the
-				// common case and it should cost nothing.
+				// Nothing subscribed. Keep the statuses current anyway, so switching
+				// notifications on does not announce everything that already finished.
+				lastStatus = statuses(live.sessionRows())
 				continue
 			}
 			checkForFinished()
@@ -327,70 +344,102 @@ func startPushWatcher() {
 	}()
 }
 
-func checkForFinished() {
-	res, err := client.Call(map[string]any{"type": "sessions:list"}, "sessions:list", 20*time.Second)
-	if err != nil {
-		return
-	}
-	raw, _ := res["sessions"].([]any)
-	names := projectNames()
-
-	type event struct {
-		title, body, id string
-	}
-	var events []event
-	seen := map[string]bool{}
-
-	for _, s := range raw {
-		sm, ok := s.(map[string]any)
-		if !ok {
-			continue
+// statuses is what to remember when there is nobody to tell.
+func statuses(rows []map[string]any) map[string]string {
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		id, _ := row["id"].(string)
+		if id != "" {
+			out[id], _ = row["status"].(string)
 		}
+	}
+	return out
+}
+
+// pushEvent is one buzz: the line it shows, and the session a tap opens.
+type pushEvent struct {
+	title, body, id string
+}
+
+// statusEvents decides which status changes deserve a notification and returns the
+// statuses to remember for the next pass.
+//
+// Kept separate from the sending, and pure, so the rules can be read and tested on
+// their own. `prev` decides everything: an empty one yields no events, which is what
+// makes the first pass after startup quiet rather than announcing every session that
+// finished hours ago.
+func statusEvents(raw []map[string]any, names map[string]string, prev map[string]string) ([]pushEvent, map[string]string) {
+	now := make(map[string]string, len(raw))
+	var events []pushEvent
+
+	for _, sm := range raw {
 		id, _ := sm["id"].(string)
-		status, _ := sm["status"].(string)
 		if id == "" {
 			continue
 		}
-		seen[id] = true
-		prev, known := lastStatus[id]
-		lastStatus[id] = status
-		if !pushPrimed || !known || prev == status {
+		status, _ := sm["status"].(string)
+		now[id] = status
+		was, known := prev[id]
+		if !known || was == status {
 			continue
 		}
 
 		name, _ := sm["name"].(string)
 		if name == "" {
-			name = id[:8]
+			name = shortID(id)
 		}
 		projectID, _ := sm["projectId"].(string)
 		where := names[projectID]
+
 		switch status {
+		case "finished":
+			// The agent's turn ended with nobody at the desk. The daemon reserves
+			// `idle` for the same event while someone is watching it there, so
+			// `finished` is the case this app exists for: it is the status a turn
+			// lands in when you are away, and it is not `completed`.
+			events = append(events, pushEvent{name, place("Finished", where), id})
 		case "completed":
-			events = append(events, event{name, fmt.Sprintf("Finished in %s", where), id})
+			// The session itself ended: the agent exited, or someone stopped it.
+			events = append(events, pushEvent{name, place("Ended", where), id})
 		case "failed":
-			events = append(events, event{name, fmt.Sprintf("Failed in %s", where), id})
+			events = append(events, pushEvent{name, place("Failed", where), id})
 		case "waiting":
 			reason, _ := sm["waitingReason"].(string)
 			if reason == "" {
 				reason = "waiting for you"
 			}
-			events = append(events, event{name, reason, id})
+			events = append(events, pushEvent{name, reason, id})
 		}
-	}
-
-	// Forget sessions that no longer exist, so the map does not grow forever.
-	for id := range lastStatus {
-		if !seen[id] {
-			delete(lastStatus, id)
-		}
-	}
-
-	if !pushPrimed {
-		pushPrimed = true
-		return
 	}
 
 	sort.Slice(events, func(i, j int) bool { return events[i].title < events[j].title })
+	return events, now
+}
+
+// place appends the project when there is one, so an unknown project reads as
+// "Finished" rather than "Finished in ".
+func place(what, where string) string {
+	if where == "" {
+		return what
+	}
+	return what + " in " + where
+}
+
+// shortID is the fallback label for a session the daemon never named. Sliced rather
+// than assumed 36 characters, because a slice past the end panics.
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+func checkForFinished() {
+	events, now := statusEvents(live.sessionRows(), projectNames(), lastStatus)
+	// Replacing the map rather than updating it also drops any session the daemon no
+	// longer lists, so the table cannot grow for the life of the process.
+	lastStatus = now
+
 	for _, e := range events {
 		sent, errs := sendPush(map[string]any{
 			"title":     e.title,

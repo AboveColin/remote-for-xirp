@@ -11,9 +11,66 @@
 
 const LIST_POLL_MS = 5000;
 const DETAIL_POLL_MS = 4000;
-const ACTIVE_STATUSES = ['running', 'idle', 'waiting', 'starting'];
+// While the event stream is up, the poll is only a net under a missed frame, so it runs
+// at a rate that costs a sleeping phone nothing.
+const LIST_POLL_LIVE_MS = 30000;
+const DETAIL_POLL_LIVE_MS = 30000;
+
+// The daemon's own ACTIVE_SESSION_STATUSES, copied rather than guessed. The two that
+// were missing are the two that matter: `finished` is where a turn lands when nobody is
+// at the desk, which is when this app is in use, and `waiting_on_parent` is a child
+// session blocked on its parent. The Active filter hid both, and both drew an unstyled
+// pill. `starting` was in this list and is not a session status at all; it belongs to the
+// daemon's subagent states.
+const ACTIVE_STATUSES = ['running', 'waiting', 'waiting_on_parent', 'finished', 'idle'];
+
+// Only `running` can mean the agent is mid-turn. `finished` and `idle` are both turn
+// ends, so the working indicator must not read them as work in progress.
+const WORKING_STATUS = 'running';
+
+// Which statuses are worth your attention first, most urgent first. A session that
+// wants an answer outranks one that is working, because only one of them is blocked on
+// you.
+const STATUS_RANK = ['waiting', 'running', 'finished', 'waiting_on_parent', 'idle'];
+
+const STATUS_LABELS = { waiting_on_parent: 'waiting on parent' };
+const statusLabel = (s) => STATUS_LABELS[s] || s || '?';
 
 const el = (id) => document.getElementById(id);
+
+// Icons live in the sprite at the top of index.html. Nodes built here reference it the
+// same way the markup does, so there is one drawing of each.
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function icon(name, cls = 'ico') {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', cls);
+  const use = document.createElementNS(SVG_NS, 'use');
+  use.setAttribute('href', `#i-${name}`);
+  svg.append(use);
+  return svg;
+}
+
+// A blank column while the first request is in flight reads as "there is nothing here",
+// and the word "Loading…" reads as something that may never finish. Rows in the shape of
+// the real content say neither, and they stop the layout jumping when the answer
+// lands.
+function skeletonLine(width, cls = '') {
+  const line = document.createElement('div');
+  line.className = `sk ${cls}`.trim();
+  line.style.width = width;
+  return line;
+}
+
+function skeletonCards(n, widths = ['58%', '34%', '78%']) {
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < n; i++) {
+    const card = document.createElement('div');
+    card.className = 'card sk-card';
+    for (const w of widths) card.append(skeletonLine(w));
+    frag.append(card);
+  }
+  return frag;
+}
 const views = {
   login: el('login'),
   welcome: el('welcome'),
@@ -127,6 +184,9 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
 
 let state = {
   view: 'login',
+  loaded: false,
+  streamLive: false,
+  staleAt: null,
   filter: settings.filter,
   sessions: [],
   sessionId: null,
@@ -171,9 +231,85 @@ function startPolling() {
   state.timer = null;
   if (document.hidden) return;
   const view = state.view;
-  if (view === 'projects' || view === 'list') state.timer = setInterval(refreshList, LIST_POLL_MS);
-  else if (view === 'detail') state.timer = setInterval(refreshDetail, DETAIL_POLL_MS);
+  const list = state.streamLive ? LIST_POLL_LIVE_MS : LIST_POLL_MS;
+  const detail = state.streamLive ? DETAIL_POLL_LIVE_MS : DETAIL_POLL_MS;
+  if (view === 'projects' || view === 'list') state.timer = setInterval(refreshList, list);
+  else if (view === 'detail') state.timer = setInterval(refreshDetail, detail);
   else if (view === 'machines') state.timer = setInterval(renderMachines, 15000);
+}
+
+// ---- live updates ----
+//
+// The bridge follows the daemon's broadcasts, so it can say what changed instead of this
+// asking every five seconds. An event names what moved and carries none of it: the app
+// re-reads the endpoint, which costs the daemon nothing now.
+//
+// Only the machine serving this page gets a stream. EventSource cannot set a header, so
+// a machine reached cross-origin with an access key would need that key in the URL, and
+// the pairing design keeps it out of URLs on purpose. Those keep polling.
+
+let stream = null;
+
+function connectEvents() {
+  disconnectEvents();
+  if (!('EventSource' in window) || document.hidden) return;
+  const host = activeHost();
+  if (host.url) return;
+
+  stream = new EventSource('/api/events');
+  stream.onopen = () => {
+    state.streamLive = true;
+    startPolling();
+  };
+  stream.onmessage = (e) => {
+    try {
+      noteChange(JSON.parse(e.data));
+    } catch {
+      // A frame this version does not understand is not worth a broken screen.
+    }
+  };
+  stream.onerror = () => {
+    // EventSource reconnects on its own. Until it does, the faster poll carries.
+    state.streamLive = false;
+    startPolling();
+  };
+}
+
+function disconnectEvents() {
+  if (stream) stream.close();
+  stream = null;
+  state.streamLive = false;
+}
+
+// Starting one session touches several rows, so frames arrive in bursts. Collect what
+// moved, then read once. A session's own change is kept per id, so the screen showing one
+// session does not re-read it because a different one moved.
+let changeTimer = null;
+const moved = new Set();
+
+function noteChange(c) {
+  moved.add(c.kind === 'session' && c.id ? `session:${c.id}` : c.kind);
+  clearTimeout(changeTimer);
+  changeTimer = setTimeout(applyChanges, 150);
+}
+
+function applyChanges() {
+  const kinds = new Set(moved);
+  moved.clear();
+  if (kinds.has('permissions')) refreshApprovals();
+  if (kinds.has('restorable') && state.view === 'machines') refreshRestorable();
+
+  // Any session or project moving changes a list. The open session's own row, or a bulk
+  // change where the mover is not named, changes the screen showing it.
+  const anySession = [...kinds].some((k) => k.startsWith('session') || k === 'projects');
+  const thisSession = kinds.has(`session:${state.sessionId}`) || kinds.has('sessions');
+  if (state.view === 'projects' || state.view === 'list') {
+    if (anySession) refreshList();
+  } else if (state.view === 'detail') {
+    if (thisSession) refreshDetail();
+  } else if (state.view === 'machines') {
+    if (anySession) renderMachines();
+  }
 }
 
 function show(view) {
@@ -226,9 +362,19 @@ function compact(n) {
   return `${(n / 1e6).toFixed(1)}M`;
 }
 
+// Every status the daemon can set, so none of them arrives as an unstyled pill.
 function statusClass(s) {
-  const known = ['running', 'idle', 'completed', 'waiting', 'failed', 'stopped'];
-  return known.includes(s) ? `pill-${s}` : '';
+  const known = [
+    'running',
+    'waiting',
+    'waiting_on_parent',
+    'finished',
+    'idle',
+    'paused',
+    'completed',
+    'failed',
+  ];
+  return known.includes(s) ? `pill-${s.replace(/_/g, '-')}` : '';
 }
 
 function pct(session) {
@@ -236,6 +382,53 @@ function pct(session) {
   const size = session.contextWindowSize;
   if (!used || !size) return null;
   return Math.round((used / size) * 100);
+}
+
+// How full the context window is decides whether to keep going or start a fresh
+// session, and it was a number in a grey line of six other numbers. Amber from 60%
+// because a session that long is worth watching before it is urgent; red from 85%
+// because past that a harness compacts soon, and compaction is where detail goes.
+function contextTone(used) {
+  if (used >= 85) return 'hot';
+  if (used >= 60) return 'warm';
+  return 'ok';
+}
+
+function contextMeter(used) {
+  const meter = document.createElement('div');
+  meter.className = 'meter';
+  meter.dataset.tone = contextTone(used);
+  const track = document.createElement('div');
+  track.className = 'meter-track';
+  const fill = document.createElement('i');
+  fill.style.width = `${Math.min(100, used)}%`;
+  track.append(fill);
+  const num = document.createElement('span');
+  num.className = 'meter-num';
+  num.textContent = `${used}%`;
+  meter.append(track, num);
+  meter.title = `${used}% of the context window used`;
+  return meter;
+}
+
+// The ring on the session screen. The markup sets r=18, so this hard-codes the
+// circumference rather than measuring it.
+const RING_LENGTH = 2 * Math.PI * 18;
+
+function paintRing(s) {
+  const ring = el('ctx-ring');
+  const used = pct(s);
+  if (used === null) {
+    ring.hidden = true;
+    return;
+  }
+  const arc = el('ctx-arc');
+  arc.style.strokeDasharray = String(RING_LENGTH);
+  arc.style.strokeDashoffset = String(RING_LENGTH * (1 - Math.min(100, used) / 100));
+  ring.dataset.tone = contextTone(used);
+  el('ctx-label').textContent = `${used}%`;
+  ring.title = `${s.contextTokens.toLocaleString()} of ${s.contextWindowSize.toLocaleString()} context tokens used`;
+  ring.hidden = false;
 }
 
 // ---- login ----
@@ -650,6 +843,27 @@ async function handover(path, body, label, btn) {
   }
 }
 
+// A phone can send what a desk cannot: a screenshot of the bug, a photo of a whiteboard.
+// The bridge writes it to a temp folder on the Mac and types the path into the agent's
+// input without sending it, so the message is still yours to write.
+el('attach-file').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file || !state.sessionId) return;
+  const note = el('attach-note');
+  note.textContent = `Sending ${file.name}…`;
+  try {
+    const res = await api(
+      `/api/sessions/${encodeURIComponent(state.sessionId)}/upload?name=${encodeURIComponent(file.name)}`,
+      { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } }
+    );
+    note.textContent = `Its path is in the agent's input: ${res.path}`;
+    toast('Sent, unsent: the path is in the input');
+  } catch (err) {
+    note.textContent = err.message;
+  }
+  e.target.value = '';
+});
+
 el('open-handover').addEventListener('click', openHandover);
 el('handover-close').addEventListener('click', closeHandover);
 el('handover-sheet').addEventListener('click', (e) => {
@@ -917,6 +1131,25 @@ async function refreshDiagnostics() {
       body.append(diagCard('Database', rows));
     }
 
+    // What this app is doing to the daemon, which is the part nobody else can see.
+    // `drift` is the number of rows the last full resync had to correct: above zero
+    // means a broadcast was missed and the phone was shown something untrue.
+    const store = d.store || {};
+    const tr = d.transcripts || {};
+    body.append(
+      diagCard('This bridge', [
+        ['Daemon calls made', String(d.daemonCalls ?? '—')],
+        ['Sessions held', String(store.sessions ?? '—')],
+        ['Projects held', String(store.projects ?? '—')],
+        ['Rows corrected at resync', String(store.drift ?? '—'), store.drift ? 'bad' : 'good'],
+        ['Last resync', store.syncedSecondsAgo == null ? 'never' : `${store.syncedSecondsAgo}s ago`],
+        ['Event streams open', String(d.streams ?? 0)],
+        ['Transcripts held', `${tr.sessions ?? 0} (${tr.messages ?? 0} messages)`],
+        ['Transcript reads', String(tr.reads ?? 0)],
+        ['Transcripts re-read', String(tr.repairs ?? 0), tr.repairs ? 'bad' : ''],
+      ])
+    );
+
     body.append(diagCard('Modules', (d.modules || []).map((m) => [m, 'active'])));
     el('diag-foot').textContent = `checked ${new Date().toLocaleTimeString()}`;
   } catch (e) {
@@ -999,7 +1232,7 @@ function machineCard(m) {
   name.className = 'machine-name';
   const chev = document.createElement('span');
   chev.className = 'machine-chev';
-  chev.textContent = '›';
+  chev.append(icon('chevron', 'ico ico-sm'));
   head.append(dot, name, chev);
 
   const sub = document.createElement('div');
@@ -1095,6 +1328,8 @@ async function renderMachines() {
 function openMachine(id) {
   activeMachineId = id;
   saveMachines();
+  connectEvents();
+  paintStale(null);
   state.sessions = [];
   state.project = null;
   el('projects-title').textContent = activeHost().name;
@@ -1112,6 +1347,12 @@ el('folders').addEventListener('click', (e) => {
 
 function renderFolders() {
   const box = el('folders');
+  if (!state.loaded && !state.sessions.length) {
+    box.replaceChildren(skeletonCards(3, ['46%', '30%']));
+    el('list-empty').hidden = true;
+    el('list-foot').textContent = '';
+    return;
+  }
   const shown =
     state.filter === 'active'
       ? state.sessions.filter((s) => ACTIVE_STATUSES.includes(s.status))
@@ -1146,25 +1387,39 @@ function renderFolders() {
     const meta = document.createElement('em');
     meta.className = 'subdued';
     const running = list.filter((s) => s.status === 'running').length;
+    const asking = list.filter((s) => s.status === 'waiting').length;
     const branches = new Set(list.map((s) => s.branch).filter(Boolean));
     const parts = [`${list.length} ${list.length === 1 ? 'session' : 'sessions'}`];
     if (running) parts.push(`${running} running`);
+    // The one count worth putting before the branch count: it is the reason to open
+    // this folder now rather than later.
+    if (asking) parts.push(`${asking} waiting on you`);
     if (branches.size > 1) parts.push(`${branches.size} branches`);
     meta.textContent = parts.join(' · ');
+    if (asking) row.classList.add('is-asking');
     text.append(nm, meta);
 
     const chev = document.createElement('span');
     chev.className = 'folder-chev';
-    chev.textContent = '›';
+    chev.append(icon('chevron', 'ico ico-sm'));
 
     row.append(swatch, text, chev);
     box.append(row);
   }
 
   el('list-empty').hidden = ordered.length > 0;
-  el('list-foot').textContent = state.lastError
-    ? state.lastError
-    : `${shown.length} of ${state.sessions.length} sessions · ${ordered.length} projects`;
+  // What to do about it depends on which filter is on: telling someone to switch to All
+  // while they are looking at All is worse than saying nothing.
+  const active = state.filter === 'active';
+  el('list-empty-title').textContent = active ? 'Nothing running here' : 'No sessions here';
+  el('list-empty-hint').textContent = active
+    ? 'Start one with +, or switch to All to see the sessions that have finished.'
+    : 'Start one with +.';
+  el('list-foot').textContent = state.staleAt
+    ? `not live since ${new Date(state.staleAt).toLocaleTimeString()} · ${state.lastError || ''}`
+    : state.lastError
+      ? state.lastError
+      : `${shown.length} of ${state.sessions.length} sessions · ${ordered.length} projects`;
 }
 
 function openProject(project) {
@@ -1212,7 +1467,7 @@ function sessionCard(s) {
   const pill = document.createElement('span');
   const noPane = s.hasPane === false && ACTIVE_STATUSES.includes(s.status);
   pill.className = `pill ${noPane ? 'pill-nopane' : statusClass(s.status)}`;
-  pill.textContent = noPane ? 'no pane' : s.waitingReason ? 'waiting' : s.status;
+  pill.textContent = noPane ? 'no pane' : s.waitingReason ? 'waiting' : statusLabel(s.status);
   top.append(name, pill);
 
   const sub = document.createElement('div');
@@ -1220,8 +1475,6 @@ function sessionCard(s) {
   const bits = [];
   if (s.branch) bits.push(s.branch);
   if (s.currentAgent) bits.push(s.currentAgent);
-  const p = pct(s);
-  if (p !== null) bits.push(`${p}% ctx`);
   if (typeof s.totalCostUsd === 'number' && s.totalCostUsd > 0) bits.push(`$${s.totalCostUsd.toFixed(2)}`);
   if (s.lastActivityAt) bits.push(ago(s.lastActivityAt));
   bits.forEach((b, i) => {
@@ -1237,6 +1490,10 @@ function sessionCard(s) {
   });
 
   card.append(top, sub);
+  // Only while the session can still run. How much context a finished session burned is
+  // history, and a bar per card across twenty finished ones is noise.
+  const used = pct(s);
+  if (used !== null && ACTIVE_STATUSES.includes(s.status)) card.append(contextMeter(used));
   if (s.lastUserMessage) {
     const last = document.createElement('div');
     last.className = 'card-last';
@@ -1248,16 +1505,27 @@ function sessionCard(s) {
 
 function renderList() {
   const wrap = el('sessions');
+  if (!state.loaded && !state.sessions.length) {
+    wrap.replaceChildren(skeletonCards(3));
+    el('sessions-empty').hidden = true;
+    el('sessions-foot').textContent = '';
+    return;
+  }
   const all =
     state.filter === 'active'
       ? state.sessions.filter((s) => ACTIVE_STATUSES.includes(s.status))
       : state.sessions;
   const shown = all.filter((s) => (s.projectName || 'No project') === state.project);
 
+  // A session waiting for an answer comes first, because it is the only kind waiting on
+  // you. Then work in progress, then turns that have ended, newest activity first
+  // within each.
+  const rank = (s) => {
+    const i = STATUS_RANK.indexOf(s.status);
+    return i === -1 ? STATUS_RANK.length : i;
+  };
   shown.sort((a, b) => {
-    const ar = a.status === 'running' ? 0 : 1;
-    const br = b.status === 'running' ? 0 : 1;
-    if (ar !== br) return ar - br;
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
     return new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0);
   });
 
@@ -1267,30 +1535,83 @@ function renderList() {
   el('sessions-foot').textContent = `${shown.length} ${shown.length === 1 ? 'session' : 'sessions'} · ${state.project}`;
 }
 
+// The last list that arrived, per machine. A Mac asleep or off the network used to give
+// an error page; the list it had is more use than that, as long as the screen says when
+// it was true. Nothing else is cached: a session list that pretends to be live is the one
+// thing this app must never show.
+function lastListKey() {
+  const host = activeHost();
+  return `xr.last.${host.url || 'local'}`;
+}
+
+function rememberList(sessions) {
+  try {
+    localStorage.setItem(lastListKey(), JSON.stringify({ at: Date.now(), sessions }));
+  } catch {
+    // A full quota costs the fallback, not the app.
+  }
+}
+
+function recallList() {
+  try {
+    const held = JSON.parse(localStorage.getItem(lastListKey()) || 'null');
+    return held && Array.isArray(held.sessions) ? held : null;
+  } catch {
+    return null;
+  }
+}
+
+function paintStale(at, why) {
+  const note = el('stale-note');
+  if (!at) {
+    note.hidden = true;
+    state.staleAt = null;
+    return;
+  }
+  state.staleAt = at;
+  const when = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  el('stale-text').textContent = `${activeHost().name} is not answering. This is how it looked at ${when}.`;
+  note.title = why || '';
+  note.hidden = false;
+}
+
 async function refreshList() {
-  // With a query on screen the 5s poll would overwrite the results with the
-  // session list a moment after they appeared.
+  // With a query on screen the poll would overwrite the results with the session list a
+  // moment after they appeared.
   if (state.query) return;
   try {
     const body = await api('/api/sessions');
     state.sessions = body.sessions || [];
-    if (body.modules) {
-      state.modules = body.modules;
-      // Search is a module. Where the edition does not have it, the box can only ever
-      // return nothing, so it is removed rather than left to disappoint.
-      const searchable = state.modules.includes('session-search');
-      el('search').closest('.searchbar').hidden = !searchable;
-    }
+    state.loaded = true;
+    noteModules(body);
     state.lastError = null;
+    paintStale(null);
+    rememberList(state.sessions);
     setLink(true);
   } catch (e) {
     if (e.message === 'unauthorized') return;
     state.lastError = e.message;
     setLink(false, e.message);
+    const held = recallList();
+    if (held) {
+      state.sessions = held.sessions;
+      state.loaded = true;
+      paintStale(held.at, e.message);
+    }
   }
   if (state.view === 'projects') renderFolders();
   else if (state.view === 'list') renderList();
-  refreshApprovals();
+}
+
+// Features that are modules rather than core. Where the edition lacks one, this removes
+// its control instead of leaving it to fail: a search box that can only return nothing,
+// or a prompts button over an endpoint that answers nothing, are both worse than no
+// button.
+function noteModules(body) {
+  if (!body || !body.modules) return;
+  state.modules = body.modules;
+  el('search').closest('.searchbar').hidden = !state.modules.includes('session-search');
+  el('prompt-btn').hidden = !state.modules.includes('saved-prompts');
 }
 
 // ---- search ----
@@ -1416,11 +1737,52 @@ async function openCreateSheet() {
       asel.append(o);
     }
     await loadModels();
+    await loadCreatePrompts();
   } catch (e) {
     err.textContent = e.message;
     err.hidden = false;
   }
 }
+
+// The goal field is where a saved prompt belongs, and typing a paragraph of one with
+// thumbs is the thing this app should never ask for.
+async function loadCreatePrompts() {
+  const sel = el('create-prompt');
+  const label = el('create-prompt-label');
+  if (!state.modules || !state.modules.includes('saved-prompts')) {
+    sel.hidden = label.hidden = true;
+    return;
+  }
+  let prompts = [];
+  try {
+    ({ prompts } = await api('/api/prompts'));
+  } catch {
+    prompts = [];
+  }
+  if (!prompts.length) {
+    sel.hidden = label.hidden = true;
+    return;
+  }
+  sel.replaceChildren();
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = 'write it below';
+  sel.append(none);
+  for (const p of prompts) {
+    const o = document.createElement('option');
+    o.value = p.prompt;
+    o.textContent = p.name;
+    sel.append(o);
+  }
+  sel.hidden = label.hidden = false;
+}
+
+el('create-prompt').addEventListener('change', (e) => {
+  if (!e.target.value) return;
+  const goal = el('create-goal');
+  goal.value = e.target.value;
+  goal.focus();
+});
 
 async function loadModels() {
   const agent = el('create-agent').value;
@@ -1511,7 +1873,7 @@ async function refreshExtras(id) {
       a.href = u;
       a.target = '_blank';
       a.rel = 'noreferrer';
-      a.textContent = u.replace(/^https?:\/\//, '');
+      a.append(icon('link', 'ico ico-sm'), document.createTextNode(u.replace(/^https?:\/\//, '')));
       box.append(a);
     }
     box.hidden = usable.length === 0;
@@ -1650,47 +2012,77 @@ el('refresh').addEventListener('click', () => {
 
 // ---- approvals ----
 //
-// The daemon only holds a permission request open for 500ms before falling
-// through to the agent's own dialog (permissionService.waitForDecision caps its
-// wait at Math.min(timeout, 500)). So this block is almost always empty and is
-// not a remote-approval workflow; it renders only when a request happens to be
-// live, and stays out of the way otherwise.
+// The daemon holds a permission request open for Math.min(timeout, 500) ms before the
+// agent's own dialog takes over, so a poll finds an empty queue nearly every time. This
+// used to run on every five-second list refresh, which was about 720 daemon calls an
+// hour to learn nothing. It runs when a session opens and when the event stream says a
+// request appeared, which is the only moment one exists.
+
+// An agent draws its own permission prompt as a numbered menu, and about half a second
+// after the request arrives that dialog is the only thing that can answer it. This reads
+// the numbers back out of the pane without knowing what any of them mean, so it works for
+// any agent that draws one and offers nothing at all for any agent that does not.
+//
+// It only ever runs while the daemon has said a request is live for that session, which
+// is what stops it offering buttons for a numbered list the agent merely printed.
+function paneMenu(paneText) {
+  const plain = String(paneText).replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '');
+  const found = new Map();
+  for (const line of plain.split('\n').slice(-24)) {
+    const m = /^[\s>❯*|│]*\(?([1-9])[.)]\s+(\S.*?)\s*$/.exec(line);
+    // A TUI draws its menu inside a box, so the label arrives with the right-hand
+    // border and the padding in front of it.
+    if (m && !found.has(m[1])) found.set(m[1], m[2].replace(/[\s│|┃╎┆]+$/, '').slice(0, 60));
+  }
+  // A menu numbers itself from one with no gaps. One such line is a list item; two in a
+  // row is a choice.
+  const options = [];
+  for (let n = 1; found.has(String(n)); n++) options.push({ key: String(n), label: found.get(String(n)) });
+  return options.length >= 2 ? options : [];
+}
 
 async function refreshApprovals() {
   const box = el('approvals');
   let requests = [];
   try {
-    const body = await api('/api/permissions');
-    requests = body.requests || [];
+    ({ requests } = await api('/api/permissions'));
   } catch {
     box.hidden = true;
     return;
   }
-  if (!requests.length) {
+  if (!requests || !requests.length) {
     box.hidden = true;
     return;
   }
+  const head = document.createElement('h2');
+  head.textContent = 'Waiting on you';
+  box.replaceChildren(head);
   box.hidden = false;
-  box.innerHTML = '<h2>Waiting on you</h2>';
-  for (const r of requests) {
-    const wrap = document.createElement('div');
-    wrap.className = 'approval';
+  for (const r of requests) box.append(await approvalCard(r));
+}
 
-    const tool = document.createElement('div');
-    tool.className = 'approval-tool';
-    tool.textContent = r.toolName || 'permission request';
-    wrap.append(tool);
+async function approvalCard(r) {
+  const wrap = document.createElement('div');
+  wrap.className = 'approval';
 
-    if (r.toolInput) {
-      const inp = document.createElement('div');
-      inp.className = 'approval-input';
-      inp.textContent =
-        typeof r.toolInput === 'string' ? r.toolInput : JSON.stringify(r.toolInput, null, 1);
-      wrap.append(inp);
-    }
+  const tool = document.createElement('div');
+  tool.className = 'approval-tool';
+  tool.textContent = r.toolName || 'permission request';
+  wrap.append(tool);
 
-    const actions = document.createElement('div');
-    actions.className = 'approval-actions';
+  if (r.toolInput) {
+    const inp = document.createElement('div');
+    inp.className = 'approval-input';
+    inp.textContent = typeof r.toolInput === 'string' ? r.toolInput : JSON.stringify(r.toolInput, null, 1);
+    wrap.append(inp);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'approval-actions';
+  wrap.append(actions);
+
+  if (!r.expired) {
+    // The daemon still holds it, so it can still be answered through the API.
     for (const behavior of ['allow', 'deny']) {
       const btn = document.createElement('button');
       btn.className = `btn ${behavior === 'allow' ? 'btn-accent' : 'btn-deny'}`;
@@ -1701,7 +2093,7 @@ async function refreshApprovals() {
             method: 'POST',
             body: JSON.stringify({ behavior }),
           });
-          toast(`${behavior === 'allow' ? 'Allowed' : 'Denied'}`);
+          toast(behavior === 'allow' ? 'Allowed' : 'Denied');
         } catch (e) {
           toast(e.message);
         }
@@ -1709,9 +2101,51 @@ async function refreshApprovals() {
       };
       actions.append(btn);
     }
-    wrap.append(actions);
-    box.append(wrap);
+    return wrap;
   }
+
+  // Past the grace period. Say so plainly, then offer whatever the agent is asking in
+  // its own terminal.
+  const note = document.createElement('p');
+  note.className = 'subdued setting-hint';
+  note.textContent = 'Xirp held this for half a second, so the agent is asking in its own terminal now.';
+  wrap.insertBefore(note, actions);
+
+  let text = '';
+  if (r.sessionId) {
+    const pane = await api(`/api/sessions/${encodeURIComponent(r.sessionId)}/pane?lines=40`).catch(() => ({}));
+    text = pane.text || '';
+  }
+  for (const option of paneMenu(text)) {
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.textContent = `${option.key}. ${option.label}`;
+    btn.onclick = async () => {
+      try {
+        await api(`/api/sessions/${encodeURIComponent(r.sessionId)}/keys?key=${option.key}`, { method: 'POST' });
+        toast(`Answered ${option.key}`);
+        setTimeout(refreshApprovals, 600);
+        setTimeout(refreshPane, 400);
+      } catch (e) {
+        toast(e.message);
+      }
+    };
+    actions.append(btn);
+  }
+
+  if (r.sessionId) {
+    const open = document.createElement('button');
+    open.className = 'btn';
+    open.textContent = 'Open the terminal';
+    open.onclick = () => {
+      settings.mode = 'terminal';
+      saveSettings();
+      paintSettings();
+      openSession(r.sessionId);
+    };
+    actions.append(open);
+  }
+  return wrap;
 }
 
 // ---- session detail ----
@@ -1724,11 +2158,25 @@ function openSession(id) {
   el('detail-urls').hidden = true;
   el('detail-commits').hidden = true;
   el('ack').hidden = true;
-  el('detail-name').textContent = 'Loading…';
+  el('ctx-ring').hidden = true;
+  el('detail-name').replaceChildren(skeletonLine('11ch', 'sk-title'));
+  // The card holds placeholder lines of its own, or it opens as an empty white strip
+  // that reads as a broken element rather than as one still loading.
+  const placeholder = document.createElement('div');
+  placeholder.className = 'scard-ph';
+  placeholder.append(skeletonLine('42%'), skeletonLine('66%'));
+  el('detail-meta').replaceChildren(placeholder);
+  // The previous session's project colour would otherwise sit on this one's card until
+  // the first answer lands.
+  el('session-card').style.removeProperty('--hue');
+  delete el('transcript').dataset.sig;
   el('detail-sub').textContent = '';
+  el('transcript').replaceChildren(skeletonCards(2, ['92%', '64%']));
   show('detail');
   setTerminalMode(settings.mode === 'terminal');
-  if (settings.mode === 'terminal') return;
+  // Terminal mode wants this too. Returning early here left the title reading
+  // "Loading…" until the first poll landed four seconds later.
+  //
   // Git state loads after the transcript rather than alongside it. Both travel
   // over the same serialised daemon connection, so issuing them together only
   // decides which one waits, and the transcript is what the screen is for.
@@ -1736,7 +2184,8 @@ function openSession(id) {
   // transcript 0.43s. Git is fetched once per open, not on every poll.
   refreshDetail(true)
     .then(() => refreshGit(id))
-    .then(() => refreshExtras(id));
+    .then(() => refreshExtras(id))
+    .then(refreshApprovals);
 }
 
 el('back').addEventListener('click', () => {
@@ -1750,9 +2199,14 @@ el('back').addEventListener('click', () => {
 async function refreshDetail(scroll = false) {
   const id = state.sessionId;
   if (!id) return;
+  // The terminal view renders the tmux pane, so it asks for the session alone. Parsing
+  // a transcript spawns `node squab session-parse` on the Mac, measured at 0.07 s and
+  // 3.5 MB of JSON for a long session, and this poll runs every four seconds.
+  const terminal = settings.mode === 'terminal';
+  const query = terminal ? 'transcript=0' : `limit=${settings.limit}`;
   let body;
   try {
-    body = await api(`/api/sessions/${encodeURIComponent(id)}?limit=${settings.limit}`);
+    body = await api(`/api/sessions/${encodeURIComponent(id)}?${query}`);
     setLink(true);
   } catch (e) {
     if (e.message !== 'unauthorized') {
@@ -1764,6 +2218,8 @@ async function refreshDetail(scroll = false) {
   const s = body.session || {};
   el('detail-name').textContent = s.name || s.goal || id.slice(0, 8);
   el('detail-sub').textContent = [s.projectName, s.branch].filter(Boolean).join(' · ');
+  // The same hue the folder list gives this project, so the two screens agree.
+  el('session-card').style.setProperty('--hue', projectHue(s.projectName || ''));
 
   el('ack').hidden = !(s.status === 'completed' || s.status === 'failed');
 
@@ -1774,19 +2230,18 @@ async function refreshDetail(scroll = false) {
   el('composer').hidden = noPane;
 
   // Status leads and is the only coloured thing here; the rest is one grey line of
-  // reference facts, separated by the stylesheet rather than by more boxes.
+  // reference facts, separated by the stylesheet rather than by more boxes. The context
+  // number left this line for the ring beside it.
   const meta = el('detail-meta');
   meta.innerHTML = '';
   const status = document.createElement('span');
   status.className = `pill ${statusClass(s.status)}`;
-  status.textContent = s.waitingReason ? `waiting: ${s.waitingReason}` : s.status;
+  status.textContent = s.waitingReason ? `waiting: ${s.waitingReason}` : statusLabel(s.status);
   meta.append(status);
 
   const tags = [];
   if (s.currentAgent) tags.push(s.currentAgent);
   if (s.model) tags.push(s.model);
-  const p = pct(s);
-  if (p !== null) tags.push(`${p}% of ${Math.round(s.contextWindowSize / 1000)}k ctx`);
   if (typeof s.totalCostUsd === 'number' && s.totalCostUsd > 0) {
     tags.push(`$${s.totalCostUsd.toFixed(2)}`);
   }
@@ -1797,8 +2252,11 @@ async function refreshDetail(scroll = false) {
     tag.textContent = t;
     meta.append(tag);
   }
+  paintRing(s);
 
-  renderTranscript(body, s, scroll);
+  // The terminal view draws the pane, so the transcript is neither fetched nor built
+  // for it.
+  if (!terminal) renderTranscript(body, s, scroll);
 }
 
 // ---- transcript ----
@@ -1969,7 +2427,9 @@ function renderTranscript(body, s, forceScroll) {
   const tail = all.length ? all[all.length - 1] : null;
   const agentOwesReply =
     tail && !(tail.role === 'assistant' && (tail.type === 'message' || !tail.type));
-  if (ACTIVE_STATUSES.includes(s.status) && agentOwesReply && fresh) {
+  // `finished` and `idle` are turn ends, so they are active sessions that owe nothing.
+  // Before this list matched the daemon's, neither status reached this test.
+  if (s.status === WORKING_STATUS && agentOwesReply && fresh) {
     const typing = document.createElement('div');
     typing.className = 'typing';
     for (let i = 0; i < 3; i++) typing.append(document.createElement('span'));
@@ -2019,8 +2479,8 @@ async function refreshPane() {
 function setTerminalMode(on) {
   el('terminal-wrap').hidden = !on;
   el('transcript').hidden = on;
-  el('detail-commits').hidden = on || el('detail-commits').hidden;
-  el('detail-urls').hidden = on || el('detail-urls').hidden;
+  // The card above stays in every mode: a dev-server link the agent printed is worth
+  // as much while you are watching the pane as while you are reading the chat.
   if (paneTimer) clearInterval(paneTimer);
   paneTimer = null;
   if (on && !document.hidden) {
@@ -2088,7 +2548,7 @@ function renderHosts() {
     if (h.id !== 'local') {
       const del = document.createElement('button');
       del.className = 'host-del';
-      del.textContent = '×';
+      del.append(icon('close', 'ico ico-sm'));
       del.setAttribute('aria-label', `Remove ${h.name}`);
       del.onclick = () => {
         hosts = hosts.filter((x) => x.id !== h.id);
@@ -2160,7 +2620,7 @@ window.addEventListener('scroll', updateJump, { passive: true });
 function paintSendMode() {
   const btn = el('send-mode');
   const submit = settings.sendMode !== 'type';
-  btn.textContent = submit ? '⏎' : '⌨';
+  el('send-mode-icon').setAttribute('href', submit ? '#i-enter' : '#i-keyboard');
   btn.classList.toggle('on', !submit);
   btn.title = submit
     ? 'Submit: send the message and let the agent run it'
@@ -2230,6 +2690,127 @@ el('stop').addEventListener('click', async () => {
   }
 });
 
+// ---- saved prompts ----
+//
+// The list is Xirp's own, from its settings on the desktop, so it is the same list you
+// keep there. Tapping one fills the composer and stops: on a phone, sending has to stay
+// a separate deliberate act, or a mistyped tap talks to your agent.
+//
+// Writing is a whole-list replace, because `chirp:savedPrompts:set` is the only call the
+// daemon offers. The bridge reads and writes back inside one request, so a prompt added
+// on the desktop within that window is lost.
+
+function promptsError(msg) {
+  const box = el('prompts-error');
+  box.textContent = msg;
+  box.hidden = !msg;
+}
+
+async function openPrompts() {
+  promptsError('');
+  el('prompts-sheet').hidden = false;
+  await renderPrompts();
+}
+
+async function renderPrompts() {
+  const box = el('prompts-list');
+  box.replaceChildren(skeletonCards(2, ['40%', '86%']));
+  let prompts = [];
+  try {
+    ({ prompts } = await api('/api/prompts'));
+  } catch (e) {
+    box.replaceChildren();
+    promptsError(e.message);
+    return;
+  }
+  box.replaceChildren();
+  if (!prompts.length) {
+    const blank = document.createElement('p');
+    blank.className = 'subdued setting-hint';
+    blank.textContent = 'No saved prompts on this machine yet.';
+    box.append(blank);
+    return;
+  }
+  for (const p of prompts) {
+    const row = document.createElement('div');
+    row.className = 'prompt-row';
+
+    const pick = document.createElement('button');
+    pick.className = 'prompt-pick';
+    const nm = document.createElement('strong');
+    nm.textContent = p.name;
+    const preview = document.createElement('span');
+    preview.className = 'subdued';
+    preview.textContent = p.prompt;
+    pick.append(nm, preview);
+    pick.onclick = () => usePrompt(p);
+
+    const del = document.createElement('button');
+    del.className = 'prompt-del';
+    del.setAttribute('aria-label', `Delete ${p.name}`);
+    del.append(icon('close', 'ico ico-sm'));
+    del.onclick = () => deletePrompt(p);
+
+    row.append(pick, del);
+    box.append(row);
+  }
+}
+
+function usePrompt(p) {
+  const box = el('composer-text');
+  // Appended, not substituted: the text already in the composer is usually the context
+  // the prompt is about.
+  box.value = box.value.trim() ? `${box.value.replace(/\s+$/, '')}\n\n${p.prompt}` : p.prompt;
+  box.dispatchEvent(new Event('input'));
+  el('prompts-sheet').hidden = true;
+  box.focus();
+  toast(`Put "${p.name}" in the composer`);
+}
+
+async function deletePrompt(p) {
+  if (!confirm(`Delete the saved prompt "${p.name}" from Xirp?`)) return;
+  promptsError('');
+  try {
+    await api('/api/prompts', { method: 'POST', body: JSON.stringify({ delete: p.id }) });
+    toast('Deleted');
+    renderPrompts();
+  } catch (e) {
+    promptsError(e.message);
+  }
+}
+
+el('prompt-btn').addEventListener('click', openPrompts);
+el('prompts-close').addEventListener('click', () => (el('prompts-sheet').hidden = true));
+el('prompts-sheet').addEventListener('click', (e) => {
+  if (e.target === el('prompts-sheet')) el('prompts-sheet').hidden = true;
+});
+
+el('prompt-save').addEventListener('click', async (e) => {
+  const text = el('composer-text').value.trim();
+  const name = el('prompt-name').value.trim();
+  if (!text) {
+    promptsError('Type the prompt in the composer first, then name it here.');
+    return;
+  }
+  if (!name) {
+    promptsError('Give it a name, so you can find it later.');
+    return;
+  }
+  const btn = e.target;
+  btn.disabled = true;
+  try {
+    await api('/api/prompts', { method: 'POST', body: JSON.stringify({ name, prompt: text }) });
+    el('prompt-name').value = '';
+    promptsError('');
+    toast(`Saved "${name}"`);
+    renderPrompts();
+  } catch (e2) {
+    promptsError(e2.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ---- boot ----
 
 // A pairing link carries the key in the fragment. Exchange it for a cookie and get
@@ -2265,6 +2846,8 @@ async function boot() {
     try {
       const body = await api('/api/sessions');
       state.sessions = body.sessions || [];
+      state.loaded = true;
+      noteModules(body);
       setLink(true);
       markSeen();
       openSession(wanted);
@@ -2284,11 +2867,14 @@ async function boot() {
   }
   show('machines');
   renderMachines();
+  connectEvents();
   // Warm the session list for the active machine so opening it is instant, and so a
   // 401 surfaces as the login gate rather than as an empty folder list.
   try {
-    const { sessions } = await api('/api/sessions');
-    state.sessions = sessions || [];
+    const body = await api('/api/sessions');
+    state.sessions = body.sessions || [];
+    state.loaded = true;
+    noteModules(body);
     setLink(true);
   } catch (e) {
     setLink(false, e.message);
@@ -2300,12 +2886,15 @@ async function boot() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
-    // Backgrounded: stop asking. Whatever changed will be fetched on return.
+    // Backgrounded: stop asking, and let go of the stream. Whatever changed will be
+    // fetched on return.
+    disconnectEvents();
     startPolling();
     if (paneTimer) clearInterval(paneTimer);
     paneTimer = null;
     return;
   }
+  connectEvents();
   // Back in front: catch up once immediately, then resume the interval.
   if (state.view === 'machines') renderMachines();
   if (state.view === 'projects' || state.view === 'list') refreshList();

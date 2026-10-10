@@ -20,14 +20,9 @@ import (
 // `capture-pane -e` keeps the SGR sequences; the browser renders them. `-J` joins
 // wrapped lines so a narrow phone does not re-wrap already-wrapped output.
 func sessionPane(w http.ResponseWriter, r *http.Request, id string) {
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	sm, _ := res["session"].(map[string]any)
-	if sm == nil {
-		writeJSON(w, 404, map[string]any{"error": "session not found"})
 		return
 	}
 	target, _ := sm["tmuxSession"].(string)
@@ -79,6 +74,18 @@ func sessionPane(w http.ResponseWriter, r *http.Request, id string) {
 // Only an allowlist of key names is accepted. Passing arbitrary strings through to
 // `tmux send-keys` would let anything type anything into any pane.
 var allowedKeys = map[string]string{
+	// The digits answer an agent's own permission prompt, which draws itself as a
+	// numbered menu. They are literal characters, so the allowlist keeps its meaning:
+	// nothing arbitrary reaches send-keys.
+	"1":      "1",
+	"2":      "2",
+	"3":      "3",
+	"4":      "4",
+	"5":      "5",
+	"6":      "6",
+	"7":      "7",
+	"8":      "8",
+	"9":      "9",
 	"escape": "Escape",
 	"tab":    "Tab",
 	"up":     "Up",
@@ -108,12 +115,11 @@ func sessionKeys(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
 		return
 	}
-	sm, _ := res["session"].(map[string]any)
 	target, _ := sm["tmuxSession"].(string)
 	if target == "" {
 		writeJSON(w, 400, map[string]any{"error": "session has no tmux pane"})

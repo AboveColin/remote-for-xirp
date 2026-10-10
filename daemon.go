@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -114,6 +116,10 @@ func discover() (Creds, error) {
 	return c, nil
 }
 
+// discoverCreds is the seam the tests dial through: they point the client at a fake
+// daemon instead of at the running app's process environment.
+var discoverCreds = discover
+
 // tokenOfPID reads CHIRP_WS_TOKEN out of one process's environment.
 func tokenOfPID(pid string) string {
 	env, err := exec.Command("ps", "-E", "-o", "command=", "-p", pid).Output()
@@ -126,76 +132,146 @@ func tokenOfPID(pid string) string {
 	return ""
 }
 
-// Client is a request/response wrapper over the daemon's WebSocket.
+// firstDial keeps the startup log to one line. Six sockets dialing would otherwise say
+// the same thing six times.
+var firstDial sync.Once
+
+// conn is one WebSocket to the daemon, held by one caller at a time.
 //
-// The protocol has no request IDs: a reply is matched only by its `type`. So
-// requests are serialized under a mutex and each waits for the one response
-// type it expects. That caps throughput at one in-flight call, which is far
-// above what a phone UI generates and removes any chance of crossing replies.
-type Client struct {
-	mu    sync.Mutex
-	conn  *websocket.Conn
-	creds Creds
+// The protocol has no request ids: a reply is matched by its type, so two calls sharing
+// a socket would read each other's answers. One caller per socket makes that impossible,
+// and several sockets give several calls at once.
+type conn struct {
+	ws *websocket.Conn
 }
 
-func NewClient() *Client { return &Client{} }
+// poolSize is how many calls can be in flight.
+//
+// One socket under one mutex was the whole client, so every request queued behind every
+// other: a slow branch diff blocked the session list for its full 30 seconds, and the
+// push watcher blocked it every 20. Six is this app's own peak demand, two per open phone
+// for the detail and the pane, plus the push watcher and a resync, and it is the number
+// measured to work: the daemon greeted six authenticated clients at once alongside the
+// desktop app, and answered each on the socket that asked. Sockets dial on first use, so
+// an unused one costs nothing.
+const poolSize = 6
 
-func (c *Client) connect() error {
-	if c.conn != nil {
+// Client is a request/response wrapper over the daemon's WebSocket.
+type Client struct {
+	free chan *conn
+	// calls counts every request sent, which /api/diagnostics reports. It is how you
+	// tell whether this app is asking the daemon for things it already knows: an idle
+	// phone with the store warm should move it by nothing.
+	calls atomic.Int64
+}
+
+func NewClient() *Client {
+	c := &Client{free: make(chan *conn, poolSize)}
+	for i := 0; i < poolSize; i++ {
+		c.free <- &conn{}
+	}
+	return c
+}
+
+// take waits for a free socket. The pool is sized to this app's own concurrency, so
+// exhaustion means something is stuck rather than busy, and the message says how many.
+func (c *Client) take(timeout time.Duration) (*conn, error) {
+	select {
+	case cn := <-c.free:
+		return cn, nil
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("all %d daemon connections were busy for %s", poolSize, timeout)
+	}
+}
+
+// Close drops every idle socket and keeps the pool whole, so a client stays usable.
+func (c *Client) Close() {
+	for i := 0; i < poolSize; i++ {
+		select {
+		case cn := <-c.free:
+			cn.drop()
+			c.free <- cn
+		default:
+			return
+		}
+	}
+}
+
+func (cn *conn) connect() error {
+	if cn.ws != nil {
 		return nil
 	}
-	creds, err := discover()
+	// Rediscovered per dial rather than cached: the token is minted per app launch and
+	// the port changes with it, so a cached pair is stale exactly when it matters.
+	creds, err := discoverCreds()
 	if err != nil {
 		return err
 	}
 	url := fmt.Sprintf("ws://127.0.0.1:%s/?token=%s", creds.Port, creds.Token)
-	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	ws, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		return fmt.Errorf("dial daemon on :%s: %w", creds.Port, err)
 	}
-	c.conn = conn
-	c.creds = creds
-	log.Printf("connected to Xirp daemon on 127.0.0.1:%s", creds.Port)
+	cn.ws = ws
+	firstDial.Do(func() { log.Printf("connected to Xirp daemon on 127.0.0.1:%s", creds.Port) })
 	return nil
 }
 
-func (c *Client) drop() {
-	if c.conn != nil {
-		c.conn.Close()
-		c.conn = nil
+func (cn *conn) drop() {
+	if cn.ws != nil {
+		cn.ws.Close()
+		cn.ws = nil
 	}
 }
 
-// Call sends one message and returns the first reply whose type is wantType.
-// Unrelated broadcasts (the daemon pushes session/terminal events unprompted)
-// are skipped. An `error` reply for our request type is surfaced as an error.
-func (c *Client) Call(req map[string]any, wantType string, timeout time.Duration) (map[string]any, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// timeoutError says the daemon did not answer in time. It is a distinct type because
+// it is the one failure Call must not retry: the request is already on the wire and the
+// daemon may still act on it, so a resend of session:create makes a second session.
+type timeoutError struct{ want string }
 
-	res, err := c.call(req, wantType, timeout)
-	if err != nil && c.conn == nil {
-		// Connection was dropped (app restarted, token rotated). Retry once so a
+func (e timeoutError) Error() string { return "the daemon did not answer with " + e.want + " in time" }
+
+// Call sends one message and returns the first reply whose type is wantType. It skips
+// the unrelated broadcasts the daemon pushes unprompted, and it surfaces errors in both
+// shapes they arrive in:
+//
+//   - a generic `{type:"error", originalType:<our request>}` frame,
+//   - one of the daemon's own typed error frames, named per call in errTypes,
+//     because the naming is not uniform: `git:error` covers the whole git category
+//     while `session:swap-agent:error` belongs to that one request. Their
+//     responseTypes in `api:describe` say which a call can receive.
+func (c *Client) Call(req map[string]any, wantType string, timeout time.Duration, errTypes ...string) (map[string]any, error) {
+	c.calls.Add(1)
+	cn, err := c.take(timeout)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { c.free <- cn }()
+
+	res, err := cn.call(req, wantType, timeout, errTypes...)
+	var te timeoutError
+	if err != nil && cn.ws == nil && !errors.As(err, &te) {
+		// The connection broke (app restarted, token rotated). Retry once so a
 		// restart of Xirp doesn't require a restart of the bridge.
-		if err2 := c.connect(); err2 != nil {
+		if err2 := cn.connect(); err2 != nil {
 			return nil, err2
 		}
-		return c.call(req, wantType, timeout)
+		return cn.call(req, wantType, timeout, errTypes...)
 	}
 	return res, err
 }
 
-func (c *Client) call(req map[string]any, wantType string, timeout time.Duration) (map[string]any, error) {
-	if err := c.connect(); err != nil {
+func (cn *conn) call(req map[string]any, wantType string, timeout time.Duration, errTypes ...string) (map[string]any, error) {
+	if err := cn.connect(); err != nil {
 		return nil, err
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	c.conn.SetWriteDeadline(time.Now().Add(timeout))
-	if err := c.conn.WriteMessage(websocket.TextMessage, body); err != nil {
-		c.drop()
+	cn.ws.SetWriteDeadline(time.Now().Add(timeout))
+	if err := cn.ws.WriteMessage(websocket.TextMessage, body); err != nil {
+		cn.drop()
 		return nil, fmt.Errorf("write %s: %w", req["type"], err)
 	}
 	if wantType == "" {
@@ -204,28 +280,104 @@ func (c *Client) call(req map[string]any, wantType string, timeout time.Duration
 
 	deadline := time.Now().Add(timeout)
 	for {
+		// Out of time. Drop the connection rather than keep it: the answer may still
+		// be on its way, and the next call waiting for that same type would read it as
+		// its own. One redial costs a discover plus a dial.
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("timeout waiting for %s", wantType)
+			cn.drop()
+			return nil, timeoutError{want: wantType}
 		}
-		c.conn.SetReadDeadline(deadline)
-		_, raw, err := c.conn.ReadMessage()
+		cn.ws.SetReadDeadline(deadline)
+		_, raw, err := cn.ws.ReadMessage()
 		if err != nil {
-			c.drop()
+			cn.drop()
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				return nil, timeoutError{want: wantType}
+			}
 			return nil, fmt.Errorf("read while waiting for %s: %w", wantType, err)
 		}
 		var msg map[string]any
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			continue
 		}
-		switch msg["type"] {
-		case wantType:
+		mt, _ := msg["type"].(string)
+		if mt == wantType && aboutOurSession(req, msg, mt) {
 			return msg, nil
-		case "error":
+		}
+		if mt == "error" {
 			if orig, ok := msg["originalType"].(string); ok && orig == req["type"] {
 				return nil, fmt.Errorf("daemon rejected %s: %v", orig, msg["message"])
 			}
+			continue
+		}
+		for _, et := range errTypes {
+			if mt == et {
+				return nil, daemonError(mt, msg)
+			}
 		}
 	}
+}
+
+// sessionOf reads the session a frame is about. The daemon puts it at the top level on
+// some types and inside the session row on others.
+func sessionOf(msg map[string]any) string {
+	if id, _ := msg["sessionId"].(string); id != "" {
+		return id
+	}
+	if sm, ok := msg["session"].(map[string]any); ok {
+		id, _ := sm["id"].(string)
+		return id
+	}
+	return ""
+}
+
+// aboutOurSession says whether a frame of the wanted type answers this request rather
+// than someone else's.
+//
+// Matching on the type alone is not enough, because the daemon broadcasts several reply
+// types for every session: session:updated from 43 places, session:urls, session:created.
+// So a status change on any other session could satisfy a wait. Stopping session A then
+// reported session B's status, and renaming A returned B's row for the header.
+//
+// session:created is the one reply that is legitimately about a different session: a fork
+// asks about the source and is answered with the copy.
+func aboutOurSession(req, msg map[string]any, replyType string) bool {
+	if replyType == "session:created" {
+		return true
+	}
+	asked, _ := req["sessionId"].(string)
+	if asked == "" {
+		return true
+	}
+	got := sessionOf(msg)
+	return got == "" || got == asked
+}
+
+// daemonError turns one of the daemon's typed error frames into a Go error.
+//
+// These carry more than a sentence. `git:error` names a code (DIRECTORY_MISSING when a
+// worktree was deleted) and `session:swap-agent:error` adds a hint written for the
+// person reading it, such as "restart the session to enable it" for a session created
+// before the running build. Dropping those loses the only actionable text there is.
+func daemonError(kind string, msg map[string]any) error {
+	code, _ := msg["code"].(string)
+	text, _ := msg["message"].(string)
+	hint, _ := msg["hint"].(string)
+
+	said := code
+	if text != "" {
+		if said != "" {
+			said += ": "
+		}
+		said += text
+	}
+	if said == "" {
+		return fmt.Errorf("the daemon answered %s with no detail", kind)
+	}
+	if hint != "" {
+		said += " (hint: " + hint + ")"
+	}
+	return errors.New(said)
 }
 
 // Fire sends a message that has no declared response type (`session:message` is
@@ -235,7 +387,18 @@ func (c *Client) Fire(req map[string]any) error {
 	return err
 }
 
-// CallStream collects the daemon's streaming replies.
+// CallStream borrows a socket and collects a streaming answer on it.
+func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Duration) ([]map[string]any, error) {
+	c.calls.Add(1)
+	cn, err := c.take(timeout)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { c.free <- cn }()
+	return cn.callStream(req, wantType, timeout)
+}
+
+// callStream collects the daemon's streaming replies.
 //
 // Session search is the reason this is subtle. It answers from three independent
 // sources and each one signals its own completion: `metadata` and `messages`
@@ -250,21 +413,18 @@ func (c *Client) Fire(req map[string]any) error {
 //
 // Reaching the overall deadline returns what arrived rather than an error —
 // partial results are useful, an error page is not.
-func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Duration) ([]map[string]any, error) {
+func (cn *conn) callStream(req map[string]any, wantType string, timeout time.Duration) ([]map[string]any, error) {
 	const idleGap = 600 * time.Millisecond
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if err := c.connect(); err != nil {
+	if err := cn.connect(); err != nil {
 		return nil, err
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	c.conn.SetWriteDeadline(time.Now().Add(timeout))
-	if err := c.conn.WriteMessage(websocket.TextMessage, body); err != nil {
-		c.drop()
+	cn.ws.SetWriteDeadline(time.Now().Add(timeout))
+	if err := cn.ws.WriteMessage(websocket.TextMessage, body); err != nil {
+		cn.drop()
 		return nil, fmt.Errorf("write %s: %w", req["type"], err)
 	}
 
@@ -298,8 +458,8 @@ func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Du
 		if readBy.After(deadline) {
 			readBy = deadline
 		}
-		c.conn.SetReadDeadline(readBy)
-		_, raw, err := c.conn.ReadMessage()
+		cn.ws.SetReadDeadline(readBy)
+		_, raw, err := cn.ws.ReadMessage()
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				// Quiet on the wire. Finished if every source that spoke is done;
@@ -310,16 +470,16 @@ func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Du
 					// possibly desynchronised connection, drop it and let the next
 					// call redial — that costs one dial and removes a class of bug
 					// that would show up later as garbled replies.
-					c.drop()
+					cn.drop()
 					return frames, nil
 				}
 				continue
 			}
 			if len(frames) > 0 {
-				c.drop()
+				cn.drop()
 				return frames, nil
 			}
-			c.drop()
+			cn.drop()
 			return nil, fmt.Errorf("read while waiting for %s: %w", wantType, err)
 		}
 		var msg map[string]any
@@ -337,46 +497,6 @@ func (c *Client) CallStream(req map[string]any, wantType string, timeout time.Du
 			done[source] = true
 		}
 	}
-	c.drop()
+	cn.drop()
 	return frames, nil
-}
-
-// ParseSession shells out to squab, the orchestrator CLI shipped inside the app,
-// for a transcript. The daemon's own `messages:list` returns rows from its
-// database, which is empty for harness-driven sessions; squab's `session-parse`
-// is the canonical harness-agnostic reader (schema squab.session-parsed/v1).
-func (c *Client) ParseSession(sessionID string, limit int) (map[string]any, error) {
-	squab := os.Getenv("CHIRP_SQUAB_PATH")
-	if squab == "" {
-		squab = "/Applications/Xirp.app/Contents/Resources/app.asar.unpacked/node_modules/@chirp/squab/dist/cli.js"
-	}
-	if _, err := os.Stat(squab); err != nil {
-		return nil, fmt.Errorf("squab CLI not found at %s", squab)
-	}
-	// No --limit. Its limit is a HEAD, not a tail: `--limit 3` on a 1111-message
-	// session returns messages 0, 1 and 2. Passing the user's page size therefore
-	// pinned every conversation to its opening exchange and it never appeared to
-	// update again, because the first N messages of a growing session never change.
-	//
-	// The full parse is cheap enough to take instead and slice: measured at 0.07s
-	// for that 1111-message session, producing 3.5 MB of JSON.
-	cmd := exec.Command("node", squab, "session-parse", sessionID) //nolint:gosec // fixed argv, no shell
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("squab session-parse %s: %w", sessionID, err)
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal(out, &parsed); err != nil {
-		return nil, fmt.Errorf("squab returned non-JSON for %s: %w", sessionID, err)
-	}
-
-	// Keep the newest `limit` messages, which is what a phone is scrolled to.
-	if msgs, ok := parsed["messages"].([]any); ok {
-		parsed["totalMessages"] = len(msgs)
-		if limit > 0 && len(msgs) > limit {
-			parsed["messages"] = msgs[len(msgs)-limit:]
-			parsed["truncatedFromStart"] = true
-		}
-	}
-	return parsed, nil
 }

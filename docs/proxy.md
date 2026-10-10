@@ -14,3 +14,10 @@ this way:
   [`deploy/traefik-xirp-remote.yml`](../deploy/traefik-xirp-remote.yml).
 - `/healthz` is unauthenticated on purpose, so an uptime monitor works even when a
   key is set.
+- **Do not buffer `/api/events`, and do not time it out.** It is a server-sent event
+  stream that stays open, sending a comment line every 25 seconds. The bridge sets
+  `X-Accel-Buffering: no`, which nginx honours; Traefik does not buffer responses by
+  default, so nothing is needed there. What does bite is a read or idle timeout shorter
+  than the heartbeat: the phone reconnects every time it fires, and the app falls back to
+  polling in between, so the symptom is "it works on the LAN and feels slow through the
+  proxy". Give that route a timeout above 30 seconds.

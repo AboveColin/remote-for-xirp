@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -48,23 +49,25 @@ func main() {
 	}
 
 	remoteKey = os.Getenv("XIRP_REMOTE_KEY")
+	addr := os.Getenv("XIRP_REMOTE_ADDR")
+	if addr == "" {
+		addr = defaultAddr
+	}
+
 	switch {
 	case remoteKey == "":
-		// Open mode, by explicit choice. The service is only reachable from the
-		// LAN and the WireGuard tunnel (no port forward, no Cloudflare tunnel),
-		// so the network is the boundary. Anyone who can reach it can type into
-		// agent sessions, which is code execution as this user.
-		log.Print("XIRP_REMOTE_KEY is unset: running OPEN, no authentication. Reachable from LAN and WireGuard.")
+		// Open mode, by explicit choice. In that mode the network is the whole
+		// boundary, and anyone who can reach the address can type into agent
+		// sessions, which is code execution as this user. So the warning names the
+		// address it listens on: a bind of 127.0.0.1 reaches nobody else, and
+		// 0.0.0.0 reaches everything that can route to this machine.
+		log.Printf("XIRP_REMOTE_KEY is unset: running OPEN on %s, no authentication. Anyone who can reach that address can drive your agent sessions.", addr)
 	case len(remoteKey) < 16:
 		// A short key is worse than none: it looks like protection while being
 		// guessable, so fail loudly rather than half-protect.
 		log.Fatal("XIRP_REMOTE_KEY is set but shorter than 16 characters; use a longer key or unset it for open mode")
 	default:
 		log.Print("authentication enabled")
-	}
-	addr := os.Getenv("XIRP_REMOTE_ADDR")
-	if addr == "" {
-		addr = defaultAddr
 	}
 
 	sub, err := fs.Sub(webFS, "web")
@@ -97,7 +100,6 @@ func main() {
 			h.ServeHTTP(w, r)
 		})
 	}
-	_ = handler
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": "ok"})
 	})
@@ -114,6 +116,8 @@ func main() {
 	mux.Handle("/api/push/unsubscribe", authed(http.HandlerFunc(handlePushUnsubscribe)))
 	mux.Handle("/api/push/test", authed(http.HandlerFunc(handlePushTest)))
 	mux.Handle("/api/logs", authed(http.HandlerFunc(handleLogs)))
+	mux.Handle("/api/prompts", authed(http.HandlerFunc(handlePrompts)))
+	mux.Handle("/api/events", authed(http.HandlerFunc(handleEvents)))
 	mux.Handle("/api/sessions", authed(http.HandlerFunc(handleSessions)))
 	mux.Handle("/api/sessions/", authed(http.HandlerFunc(handleSession)))
 	mux.Handle("/api/permissions", authed(http.HandlerFunc(handlePermissions)))
@@ -123,6 +127,10 @@ func main() {
 	// web server in front just to publish 22 lines of JSON.
 	mux.HandleFunc("/.well-known/assetlinks.json", handleAssetLinks)
 	mux.Handle("/", static)
+
+	// One socket follows the daemon's broadcasts into the store, which answers the
+	// session list, the projects and the live permission requests without asking.
+	watchDaemon()
 
 	if err := loadPush(); err != nil {
 		log.Printf("could not read push subscriptions: %v", err)
@@ -224,34 +232,44 @@ func project(src map[string]any, fields []string) map[string]any {
 	return out
 }
 
-type projectCache struct {
-	names map[string]string
-	at    time.Time
+// sessionRow reads one session. The store holds every session the daemon lists, so this
+// usually costs nothing; a session the list does not carry, which search can surface,
+// still costs one call.
+func sessionRow(id string) (map[string]any, error) {
+	if row := live.session(id); row != nil {
+		return row, nil
+	}
+	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	row, _ := res["session"].(map[string]any)
+	if row == nil {
+		return nil, errors.New("session not found")
+	}
+	return row, nil
 }
 
-var pcache projectCache
-
+// Project names and default branches come from the store, which the daemon's
+// project:added, project:updated and project:removed broadcasts keep current.
 func projectNames() map[string]string {
-	if time.Since(pcache.at) < 60*time.Second && pcache.names != nil {
-		return pcache.names
-	}
-	names := map[string]string{}
-	res, err := client.Call(map[string]any{"type": "projects:list"}, "projects:list", 10*time.Second)
-	if err == nil {
-		if list, ok := res["projects"].([]any); ok {
-			for _, p := range list {
-				if pm, ok := p.(map[string]any); ok {
-					id, _ := pm["id"].(string)
-					name, _ := pm["name"].(string)
-					if id != "" {
-						names[id] = name
-					}
-				}
-			}
+	out := map[string]string{}
+	for _, row := range live.projectRows() {
+		if id, _ := row["id"].(string); id != "" {
+			out[id], _ = row["name"].(string)
 		}
 	}
-	pcache = projectCache{names: names, at: time.Now()}
-	return names
+	return out
+}
+
+func projectBase(projectID string) string {
+	for _, row := range live.projectRows() {
+		if id, _ := row["id"].(string); id == projectID {
+			base, _ := row["defaultBranch"].(string)
+			return base
+		}
+	}
+	return ""
 }
 
 // handleSessions serves GET (list) and POST (create) on /api/sessions.
@@ -260,20 +278,12 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 		handleCreate(w, r)
 		return
 	}
-	res, err := client.Call(map[string]any{"type": "sessions:list"}, "sessions:list", 15*time.Second)
-	if err != nil {
-		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	raw, _ := res["sessions"].([]any)
+	raw := live.sessionRows()
 	names := projectNames()
 	tm := tmuxStatus()
+	forcedFresh := false
 	out := make([]map[string]any, 0, len(raw))
-	for _, s := range raw {
-		sm, ok := s.(map[string]any)
-		if !ok {
-			continue
-		}
+	for _, sm := range raw {
 		p := project(sm, sessionFields)
 		if id, ok := sm["projectId"].(string); ok {
 			p["projectName"] = names[id]
@@ -283,10 +293,13 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 		// message is accepted and dropped.
 		if id, ok := sm["id"].(string); ok && tm.Available {
 			if tmuxName, _ := sm["tmuxSession"].(string); tmuxName != "" {
-				if !tm.Panes[id] {
+				if !tm.Panes[id] && !forcedFresh {
 					// Confirm before reporting a missing pane: the cached list can
-					// predate a session that was just created.
+					// predate a session that was just created. Once per request. A
+					// forced read bypasses the cache, so doing it per paneless session
+					// meant two daemon calls each, every five seconds.
 					tm = tmuxStatusFresh(true)
+					forcedFresh = true
 				}
 				p["hasPane"] = tm.Panes[id]
 			}
@@ -341,20 +354,17 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 		sessionRename(w, r, id)
 	case "file":
 		sessionFile(w, r, id)
+	case "upload":
+		sessionUpload(w, r, id)
 	default:
 		writeJSON(w, 404, map[string]any{"error": "unknown action " + action})
 	}
 }
 
 func sessionDetail(w http.ResponseWriter, r *http.Request, id string) {
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	sm, _ := res["session"].(map[string]any)
-	if sm == nil {
-		writeJSON(w, 404, map[string]any{"error": "session not found"})
 		return
 	}
 	out := project(sm, sessionFields)
@@ -369,6 +379,15 @@ func sessionDetail(w http.ResponseWriter, r *http.Request, id string) {
 		}
 	}
 	payload := map[string]any{"session": out}
+	// The terminal view draws the tmux pane, not the transcript, so its poll asks for
+	// the session alone. Parsing a transcript means spawning `node squab session-parse`,
+	// measured at 0.07 s and 3.5 MB of JSON for a 1111-message session, every four
+	// seconds, for something nothing displays.
+	if r.URL.Query().Get("transcript") == "0" {
+		payload["transcriptSkipped"] = true
+		writeJSON(w, 200, payload)
+		return
+	}
 	if parsed, err := client.ParseSession(id, limit); err == nil {
 		payload["messages"] = transcript(parsed)
 		payload["messageCount"] = parsed["messageCount"]
@@ -475,13 +494,11 @@ func sessionStop(w http.ResponseWriter, r *http.Request, id string) {
 
 // ---- permission requests ----
 
+// handlePermissions answers from the store. The daemon broadcasts permission:request the
+// moment one appears, which is the only way to see one at all: it holds each for about
+// 500 ms, so a poll asking for the list arrives after every one of them has gone.
 func handlePermissions(w http.ResponseWriter, r *http.Request) {
-	res, err := client.Call(map[string]any{"type": "permission:list"}, "permission:list", 10*time.Second)
-	if err != nil {
-		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	writeJSON(w, 200, map[string]any{"requests": res["requests"]})
+	writeJSON(w, 200, map[string]any{"requests": live.permissionRows()})
 }
 
 func handlePermissionRespond(w http.ResponseWriter, r *http.Request) {
@@ -510,7 +527,18 @@ func handlePermissionRespond(w http.ResponseWriter, r *http.Request) {
 	if body.Message != "" {
 		req["message"] = body.Message
 	}
-	if _, err := client.Call(req, "permission:resolved", 15*time.Second); err != nil {
+	// A request that is still open resolves at once. For one that has expired the
+	// daemon logs a debug line and sends nothing, so every extra second here is spent
+	// waiting for an answer that is never coming. It holds a request for
+	// Math.min(timeout, 500) ms, so expired is the normal case from a phone.
+	if _, err := client.Call(req, "permission:resolved", 3*time.Second); err != nil {
+		var te timeoutError
+		if errors.As(err, &te) {
+			writeJSON(w, 409, map[string]any{
+				"error": "that request had already expired: Xirp holds a permission request for about half a second before the agent's own dialog takes over",
+			})
+			return
+		}
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
 		return
 	}
