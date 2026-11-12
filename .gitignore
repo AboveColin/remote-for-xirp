@@ -6,3 +6,6 @@
 /deploy/android/twa/
 *.keystore
 *.jks
+
+# graft's local graph cache. Regenerable, so it is not committed: run `graft build`.
+graft/

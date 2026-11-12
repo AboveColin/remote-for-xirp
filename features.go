@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -71,14 +72,20 @@ type metaCache struct {
 	at      time.Time
 }
 
-var mcache metaCache
+var (
+	metaMu sync.Mutex
+	mcache metaCache
+)
 
 // handleMeta returns the projects and coding agents a new session can be created
 // with. Both change rarely, so the answer is cached for a minute; the create
 // sheet asks for it every time it opens.
 func handleMeta(w http.ResponseWriter, r *http.Request) {
-	if time.Since(mcache.at) < 60*time.Second && mcache.payload != nil {
-		writeJSON(w, 200, mcache.payload)
+	metaMu.Lock()
+	cached := mcache
+	metaMu.Unlock()
+	if time.Since(cached.at) < 60*time.Second && cached.payload != nil {
+		writeJSON(w, 200, cached.payload)
 		return
 	}
 
@@ -120,7 +127,9 @@ func handleMeta(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload := map[string]any{"projects": projects, "agents": agents}
+	metaMu.Lock()
 	mcache = metaCache{payload: payload, at: time.Now()}
+	metaMu.Unlock()
 	writeJSON(w, 200, payload)
 }
 
@@ -178,14 +187,9 @@ func sessionURLs(w http.ResponseWriter, r *http.Request, id string) {
 // sessionLog returns recent commits from the session's worktree, so you can see
 // what an agent actually committed rather than inferring it from the transcript.
 func sessionLog(w http.ResponseWriter, r *http.Request, id string) {
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	sm, _ := res["session"].(map[string]any)
-	if sm == nil {
-		writeJSON(w, 404, map[string]any{"error": "session not found"})
 		return
 	}
 	projectID, _ := sm["projectId"].(string)
@@ -200,7 +204,7 @@ func sessionLog(w http.ResponseWriter, r *http.Request, id string) {
 	if br, _ := sm["branch"].(string); br != "" {
 		req["branch"] = br
 	}
-	gres, err := client.Call(req, "git:log", 25*time.Second)
+	gres, err := client.Call(req, "git:log", 25*time.Second, "git:error")
 	if err != nil {
 		writeJSON(w, 200, map[string]any{"commits": []any{}, "unavailable": err.Error()})
 		return
@@ -321,14 +325,9 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 // a count of changed files, so you can see from a phone whether an agent has left
 // work uncommitted.
 func sessionGit(w http.ResponseWriter, r *http.Request, id string) {
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	sm, _ := res["session"].(map[string]any)
-	if sm == nil {
-		writeJSON(w, 404, map[string]any{"error": "session not found"})
 		return
 	}
 	projectID, _ := sm["projectId"].(string)
@@ -342,10 +341,10 @@ func sessionGit(w http.ResponseWriter, r *http.Request, id string) {
 	if worktree != "" {
 		req["worktreePath"] = worktree
 	}
-	gres, err := client.Call(req, "git:status", 20*time.Second)
+	// A session whose worktree was deleted answers git:error, not the generic error
+	// frame, so this call names that type. Without it the call waits out its timeout.
+	gres, err := client.Call(req, "git:status", 20*time.Second, "git:error")
 	if err != nil {
-		// A session on a deleted worktree answers git:error, which Call surfaces as
-		// an error. That is not a failure of this request.
 		writeJSON(w, 200, map[string]any{"unavailable": err.Error()})
 		return
 	}
@@ -408,14 +407,9 @@ func sessionFork(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	_ = json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body)
 
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	sm, _ := res["session"].(map[string]any)
-	if sm == nil {
-		writeJSON(w, 404, map[string]any{"error": "session not found"})
 		return
 	}
 	cli := cliSessionID(sm)
@@ -470,16 +464,31 @@ func sessionSwapAgent(w http.ResponseWriter, r *http.Request, id string) {
 	if body.Reason != "" {
 		req["reason"] = body.Reason
 	}
-	// The daemon answers session:agent-swapped on success and its own error type on
-	// failure; Call surfaces a generic `error` reply too.
-	res, err := client.Call(req, "session:agent-swapped", 60*time.Second)
+	// Every way a swap can fail answers session:swap-agent:error, never the generic
+	// error frame, and the frame carries the only text worth showing: a code, a
+	// sentence and sometimes a hint. Xirp 0.22.0 added UNSUPPORTED_AGENT_VERSION here
+	// for an agent CLI older than the version Xirp tests against, and
+	// ORCHESTRATOR_NOT_FOUND arrives with "restart the session to enable it".
+	res, err := client.Call(req, "session:agent-swapped", 60*time.Second, "session:swap-agent:error")
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
 		return
 	}
-	log.Printf("swapped session %s to agent %s", id, body.Agent)
-	sm, _ := res["session"].(map[string]any)
-	writeJSON(w, 200, map[string]any{"ok": true, "agent": body.Agent, "session": project(sm, sessionFields)})
+	from, _ := res["from"].(string)
+	to, _ := res["to"].(string)
+	if to == "" {
+		to = body.Agent
+	}
+	log.Printf("swapped session %s from %s to %s", id, from, to)
+
+	out := map[string]any{"ok": true, "agent": to, "from": from, "to": to}
+	// session:agent-swapped carries sessionId, from and to, and no session object. The
+	// daemon broadcasts session:updated with the row just before it, and the store keeps
+	// that, so the row is read from there.
+	if sm, err := sessionRow(id); err == nil {
+		out["session"] = project(sm, sessionFields)
+	}
+	writeJSON(w, 200, out)
 }
 
 // ---- restoring sessions after the app restarts ----
@@ -489,22 +498,15 @@ func sessionSwapAgent(w http.ResponseWriter, r *http.Request, id string) {
 // is exactly the wrong place if you are away and an agent has stopped.
 
 func handleRestorable(w http.ResponseWriter, r *http.Request) {
-	res, err := client.Call(map[string]any{"type": "sessions:restorable"}, "sessions:restorable", 20*time.Second)
-	if err != nil {
-		writeJSON(w, 502, map[string]any{"error": err.Error()})
-		return
-	}
-	raw, _ := res["sessions"].([]any)
 	names := projectNames()
+	raw := live.restorableRows()
 	out := make([]map[string]any, 0, len(raw))
-	for _, s := range raw {
-		if sm, ok := s.(map[string]any); ok {
-			e := project(sm, sessionFields)
-			if pid, _ := sm["projectId"].(string); pid != "" {
-				e["projectName"] = names[pid]
-			}
-			out = append(out, e)
+	for _, sm := range raw {
+		e := project(sm, sessionFields)
+		if pid, _ := sm["projectId"].(string); pid != "" {
+			e["projectName"] = names[pid]
 		}
+		out = append(out, e)
 	}
 	writeJSON(w, 200, map[string]any{"sessions": out})
 }
@@ -603,10 +605,37 @@ func sessionRename(w http.ResponseWriter, r *http.Request, id string) {
 
 // ---- reading a file ----
 
-// fileMaxBytes bounds a file read. Measured: this project's own CLAUDE.md is 23.6 KB,
-// which is a big markdown file by any standard, so 200 KB carries anything worth reading
-// on a phone and refuses a bundle or a binary.
+// fileMaxBytes bounds what is sent to the phone. Measured: this project's own CLAUDE.md
+// is 23.6 KB, which is a big markdown file by any standard, so 200 KB carries anything
+// worth reading on a phone and refuses a bundle or a binary.
 const fileMaxBytes = 200000
+
+// fileReadCap refuses a read before it happens. `files:read` has no offset or limit
+// parameter, so the daemon loads the whole file and sends all of it, and only then is
+// it cut to fileMaxBytes here. 5 MB is 25 times what the phone will ever display and
+// far above any file a person reads on one, so only a bundle, a lockfile or a binary
+// reaches it. The refusal names the limit and the size.
+const fileReadCap = 5 * 1024 * 1024
+
+// statObjection turns a files:stat answer into the reason a path cannot be shown, or ""
+// when it can be. Without the stat, a directory and a missing file arrive as the same
+// unexplained read failure.
+func statObjection(st map[string]any) string {
+	if why, _ := st["error"].(string); why != "" {
+		return why
+	}
+	if exists, ok := st["exists"].(bool); ok && !exists {
+		return "no such file in this session's checkout"
+	}
+	if dir, _ := st["isDirectory"].(bool); dir {
+		return "that path is a directory, not a file"
+	}
+	if size, ok := st["size"].(float64); ok && size > fileReadCap {
+		return fmt.Sprintf("that file is %.1f MB, over the %d MB this will read",
+			size/(1024*1024), fileReadCap/(1024*1024))
+	}
+	return ""
+}
 
 // sessionFile reads one file from the session's checkout, so a file an agent mentioned
 // can be read without a laptop.
@@ -629,9 +658,31 @@ func sessionFile(w http.ResponseWriter, r *http.Request, id string) {
 	if worktree != "" {
 		req["worktreePath"] = worktree
 	}
+
+	// files:stat, added in Xirp 0.20.1, classifies a path without reading it. Asking
+	// first is what lets this say "that is a directory" or "no such file" instead of
+	// passing on a read error, and it keeps a bundle from being read at all.
+	statReq := map[string]any{"type": "files:stat", "projectId": projectID, "path": path}
+	if worktree != "" {
+		statReq["worktreePath"] = worktree
+	}
+	if st, err := client.Call(statReq, "files:stat", 15*time.Second); err == nil {
+		if why := statObjection(st); why != "" {
+			writeJSON(w, 200, map[string]any{"path": path, "unavailable": why})
+			return
+		}
+	}
+
 	res, err := client.Call(req, "files:read", 25*time.Second)
 	if err != nil {
 		writeJSON(w, 200, map[string]any{"unavailable": err.Error()})
+		return
+	}
+	// The files module reports a failed read inside the success frame rather than as an
+	// error frame, so this is the only place a bad path shows up. Read as a success it
+	// renders as an empty file.
+	if why, _ := res["error"].(string); why != "" {
+		writeJSON(w, 200, map[string]any{"path": path, "unavailable": why})
 		return
 	}
 	content, _ := res["content"].(string)

@@ -17,6 +17,12 @@ import (
 //
 // A session usually has both, so the file list returns both and says which is which.
 // The daemon hands back a ready `unifiedDiff` string, so nothing here computes a diff.
+//
+// Every git request here passes "git:error" as an error reply type. A deleted worktree
+// makes the daemon answer that type (ws/helpers.js resolveGitCwdOrSendError, code
+// DIRECTORY_MISSING), and it is not in the responseTypes that api:describe reports for
+// most of these, so trusting the catalogue means waiting out the timeout. Measured at
+// 75 seconds for this screen's three calls before they named the type.
 
 // diffTextCap bounds a single file's diff.
 //
@@ -27,34 +33,14 @@ import (
 const diffTextCap = 20000
 
 func sessionProject(id string) (projectID, worktree, branch string, err error) {
-	res, err := client.Call(map[string]any{"type": "session:get", "sessionId": id}, "session:get", 15*time.Second)
+	sm, err := sessionRow(id)
 	if err != nil {
 		return "", "", "", err
 	}
-	sm, _ := res["session"].(map[string]any)
 	projectID, _ = sm["projectId"].(string)
 	worktree, _ = sm["worktreePath"].(string)
 	branch, _ = sm["branch"].(string)
 	return projectID, worktree, branch, nil
-}
-
-// projectBase returns a project's default branch, which is the base a feature branch
-// is worth comparing against.
-func projectBase(projectID string) string {
-	res, err := client.Call(map[string]any{"type": "projects:list"}, "projects:list", 10*time.Second)
-	if err != nil {
-		return ""
-	}
-	list, _ := res["projects"].([]any)
-	for _, p := range list {
-		if pm, ok := p.(map[string]any); ok {
-			if id, _ := pm["id"].(string); id == projectID {
-				b, _ := pm["defaultBranch"].(string)
-				return b
-			}
-		}
-	}
-	return ""
 }
 
 func diffFileList(raw []any) []map[string]any {
@@ -93,7 +79,7 @@ func sessionChanges(w http.ResponseWriter, r *http.Request, id string) {
 	if worktree != "" {
 		statusReq["worktreePath"] = worktree
 	}
-	if res, err := client.Call(statusReq, "git:status", 25*time.Second); err == nil {
+	if res, err := client.Call(statusReq, "git:status", 25*time.Second, "git:error"); err == nil {
 		if st, ok := res["status"].(map[string]any); ok {
 			files, _ := st["files"].([]any)
 			tracked := []any{}
@@ -121,7 +107,7 @@ func sessionChanges(w http.ResponseWriter, r *http.Request, id string) {
 		if worktree != "" {
 			req["worktreePath"] = worktree
 		}
-		if res, err := client.Call(req, "git:branchDiff", 30*time.Second); err == nil {
+		if res, err := client.Call(req, "git:branchDiff", 30*time.Second, "git:error"); err == nil {
 			files, _ := res["files"].([]any)
 			out["branchDiff"] = map[string]any{"files": diffFileList(files)}
 		} else {
@@ -188,7 +174,7 @@ func sessionFileDiff(w http.ResponseWriter, r *http.Request, id string) {
 		req["worktreePath"] = worktree
 	}
 
-	res, err := client.Call(req, want, 30*time.Second)
+	res, err := client.Call(req, want, 30*time.Second, "git:error")
 	if err != nil {
 		writeJSON(w, 200, map[string]any{"unavailable": err.Error()})
 		return

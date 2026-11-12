@@ -30,7 +30,7 @@ jobs:
     container:
       image: ghcr.io/googlechromelabs/bubblewrap:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check the inputs and the secrets
         env:
@@ -124,7 +124,7 @@ jobs:
           cat assetlinks.json
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: apk-and-assetlinks
           # The keystore must not leave the runner.
